@@ -2,6 +2,70 @@
  * @author jbouny / https://github.com/fft-ocean
  */
 
+// PATCH (voice-boat lighting-overhaul round): replaces the old six hard-coded
+// (position/color/intensity/texture) presets inline in UpdateEnvironment. Every preset pairs a
+// matching skybox image set (port/fft-ocean/img/) with a curated numeric lighting rig — the same
+// six fields as CaptainConfig.visuals.lighting (captain/src/config.ts): elevation/azimuth/
+// intensity/ambient/exposure/fogDensity — plus four fixed tint colours (lightColor/ambientColor/
+// fogColor/mountainColor) that are NOT config-tunable; picking a preset is what sets those. The
+// six numeric fields stay live-tunable afterward via the settings panel — see ApplyLighting/
+// SetLightingParams on DEMO below. `raining` is dropped entirely: none of dawn/day/dusk needs
+// reduced visibility layered on top of a lighting rig that's already been tuned for readability.
+//
+// Texture choices were picked by actually opening each of the seven shipped img/ sets, not
+// guessed: "sky" is a clean blue day sky with a soft, contained sun — the obvious Day pick.
+// "sunset" is a dramatic warm sky with god-rays over a clean horizon band — good Dusk. "clouds" is
+// a bright warm gold cloud-scape, visually distinct from sunset's deeper browns — reads as an
+// early break in the morning cloud, good Dawn. The other three shipped sets were cut entirely
+// rather than forced into a slot they don't fit (the brief's "drop the ones that can't be made
+// readable" instruction): "grimmnight" is near-black at any reasonable intensity (this was the
+// "night" preset — exactly the kind of preset the live verdict called "impossible to see
+// anything in"); "miramar" is a flat storm-grey that doesn't read as any particular time of day;
+// "violent_days"/"interstellar" are an oversaturated red and a sci-fi teal respectively, neither
+// of which reads as a real sky a captain would actually sail under.
+var FFT_OCEAN_LIGHTING_PRESETS = {
+	dawn: {
+		textureName: 'clouds',
+		lighting: { sunElevationDeg: 20, sunAzimuthDeg: -25, sunIntensity: 0.9, ambientIntensity: 0.5, exposure: 1, fogDensity: 0.000009 },
+		lightColor: new THREE.Color( 1.0, 0.81, 0.62 ),
+		ambientColor: new THREE.Color( 0.56, 0.63, 0.72 ),
+		fogColor: new THREE.Color( 0.91, 0.79, 0.66 ),
+		mountainColor: new THREE.Color( 0.42, 0.35, 0.32 )
+	},
+	day: {
+		textureName: 'sky',
+		lighting: { sunElevationDeg: 50, sunAzimuthDeg: 0, sunIntensity: 1.1, ambientIntensity: 0.55, exposure: 1, fogDensity: 0.000008 },
+		lightColor: new THREE.Color( 0.98, 0.965, 0.925 ),
+		ambientColor: new THREE.Color( 0.725, 0.784, 0.839 ),
+		fogColor: new THREE.Color( 0.72, 0.796, 0.86 ),
+		mountainColor: new THREE.Color( 0.357, 0.42, 0.47 )
+	},
+	dusk: {
+		textureName: 'sunset',
+		lighting: { sunElevationDeg: 12, sunAzimuthDeg: 25, sunIntensity: 0.8, ambientIntensity: 0.4, exposure: 1, fogDensity: 0.00001 },
+		lightColor: new THREE.Color( 1.0, 0.55, 0.35 ),
+		ambientColor: new THREE.Color( 0.29, 0.29, 0.39 ),
+		fogColor: new THREE.Color( 0.667, 0.373, 0.29 ),
+		mountainColor: new THREE.Color( 0.24, 0.17, 0.17 )
+	}
+};
+
+// PATCH (voice-boat lighting-overhaul round): backwards tolerance for the old six preset names —
+// a stale `localStorage["captain.config"]` override or URL hash (e.g. "#sunset") from before this
+// round now resolves to its nearest new preset instead of silently no-op'ing (UpdateEnvironment's
+// `default: return;` branch). "night"/"apocalypse"/"sunset" all map to "dusk" (dim-warm), "morning"
+// maps to "dawn", "cloudy"/"interstellar" map to "day" (nothing else fits either) — see the header
+// comment on FFT_OCEAN_LIGHTING_PRESETS above for why each of those old textures was cut outright
+// rather than kept as its own state.
+var FFT_OCEAN_LEGACY_PRESET_ALIASES = {
+	night: 'dusk',
+	morning: 'dawn',
+	cloudy: 'day',
+	sunset: 'dusk',
+	interstellar: 'day',
+	apocalypse: 'dusk'
+};
+
 var DEMO =
 {
 	ms_Renderer : null,
@@ -134,6 +198,36 @@ var DEMO =
 		this.ms_MainDirectionalLight = new THREE.DirectionalLight( 0xffffff, 1.5 );
 		this.ms_MainDirectionalLight.position.set( -0.2, 0.5, 1 );
 		this.ms_Scene.add( this.ms_MainDirectionalLight );
+
+		// PATCH (voice-boat lighting-overhaul round): the scene previously had exactly ONE light —
+		// a single directional with no fill — so the far side of every surface (hull, sails,
+		// mountains) fell to pure black with no reflected-sky/reflected-water bounce to soften it.
+		// That's a real contributor to the "hard to see" verdict independent of the sun's position:
+		// even a well-aimed sun leaves the shadow side unreadable with nothing filling it in. A
+		// flat AmbientLight is the cheapest fix available in this renderer (no shadow maps, no
+		// probe baking) — it lifts every unlit face by a flat amount regardless of its normal, which
+		// isn't physically a sky/bounce light but reads as one at this art scale. Position is
+		// irrelevant for AmbientLight (uniform in every direction) so nothing to set here; color
+		// and intensity are both driven per-preset by ApplyLighting() below, same as the directional
+		// light. The placeholder color/intensity here are immediately overridden at boot (LoadMountains
+		// -> LoadSkyBox -> UpdateEnvironment -> ApplyLighting, all called before the first frame
+		// renders) — kept non-degenerate only so a hypothetical caller that skips LoadSkyBox still
+		// gets SOME fill instead of none.
+		this.ms_AmbientLight = new THREE.AmbientLight( 0xffffff, 0.5 );
+		this.ms_Scene.add( this.ms_AmbientLight );
+
+		// PATCH (voice-boat lighting-overhaul round): atmospheric-perspective haze for the distant
+		// mountain cylinder (see LoadMountains below) — THREE.FogExp2 rather than linear THREE.Fog
+		// because it's a single `density` knob (matches CaptainConfig's `visuals.lighting.
+		// fogDensity`) instead of a near/far pair. Density is tiny by design: at ship/water
+		// distance (a few hundred to a few thousand world units) the fog factor this produces is
+		// negligible, while at the mountain cylinder's distance (~120000-150000 units, see
+		// LoadMountains) it's substantial — see LightingConfig's header comment in config.ts for the
+		// worked numbers. Only materials with `fog: true` opt in (LoadMountains sets that on the
+		// mountain material below); the ocean/cloud/rain/skybox shaders are all custom ShaderMaterials
+		// that never read scene.fog at all, so this is contained to the mountains by construction,
+		// not by care taken elsewhere.
+		this.ms_Scene.fog = new THREE.FogExp2( 0x8fa3b0, 0.000008 );
 
 		// Add Black Pearl
 		var loader = new THREE.OBJMTLLoader( this.ms_Loader );
@@ -305,11 +399,19 @@ var DEMO =
 		var WAVE_WORLD_X = Math.sin( waveTravelRad ) * WAVE_MAGNITUDE;
 		var WAVE_WORLD_Z = -Math.cos( waveTravelRad ) * WAVE_MAGNITUDE;
 
+		// PATCH (voice-boat sea-state-overhaul round): standalone-load fallback only (see the
+		// windX/windY PATCH note above) — captain-ocean/src/app.ts's applyWindFromConfig()
+		// immediately overrides size/choppiness/directionality too, whenever
+		// config.visuals.seaStateFollowsWind is true (the default), deriving all three from
+		// config.environment.windSpeedKts with the same "one source of truth" reasoning. 1.0 here
+		// is the directional-spreading exponent's neutral value (reproduces the original Horvath
+		// spread term exactly — see FFTOceanShader.js's u_directionality PATCH comment).
 		this.ms_Ocean = new THREE.Ocean( this.ms_Renderer, this.ms_Camera, this.ms_Scene,
 		{
 			INITIAL_SIZE : 200.0,
 			INITIAL_WIND : [ WAVE_WORLD_X, WAVE_WORLD_Z ],
 			INITIAL_CHOPPINESS : 3.6,
+			INITIAL_DIRECTIONALITY : 1.0,
 			CLEAR_COLOR : [ 1.0, 1.0, 1.0, 0.0 ],
 			SUN_DIRECTION : this.ms_MainDirectionalLight.position.clone(),
 			OCEAN_COLOR: new THREE.Vector3( 0.35, 0.4, 0.45 ),
@@ -320,8 +422,15 @@ var DEMO =
 			RESOLUTION : res
 		} );
 
-		this.LoadSkyBox();
+		// PATCH (voice-boat lighting-overhaul round): swapped order — LoadMountains must run BEFORE
+		// LoadSkyBox now. LoadSkyBox ends by calling UpdateEnvironment(), which calls ApplyLighting(),
+		// which sets ms_MountainsMaterial's color/fog tint (see LoadMountains below) — that material
+		// has to exist first, or the very first preset application at boot would silently skip
+		// tinting the mountains (ApplyLighting guards with `if (this.ms_MountainsMaterial)`, so it
+		// wouldn't crash, just leave them untinted for one preset switch). Nothing in LoadMountains
+		// depends on LoadSkyBox having run, so this reordering is behaviour-preserving otherwise.
 		this.LoadMountains();
+		this.LoadSkyBox();
 		// PATCH (voice-boat wind-visibility round): the wind-streak particle pool (feedback item
 		// 1) — see InitializeWindStreaks below. captain-ocean/src/driver.ts owns the pool's
 		// per-frame motion/recycling; this only builds the meshes and scatters their initial
@@ -449,6 +558,13 @@ var DEMO =
 			this.object.exposure = v;
 			this.object.changed = true;
 		} );
+		// PATCH (voice-boat sea-state-overhaul round): directional-spreading sharpening exponent —
+		// see Ocean.js's `directionality` field / FFTOceanShader.js's u_directionality PATCH
+		// comment. 1.0 = original formula; higher = tighter downwind cone.
+		gui.add( this.ms_Ocean, "directionality", 1.0, 4.0 ).onChange( function ( v ) {
+			this.object.directionality = v;
+			this.object.changed = true;
+		} );
 		gui.add( DEMO.ms_Ocean.materialOcean, "wireframe" );
 
 		var demo = this;
@@ -514,13 +630,33 @@ var DEMO =
 				mountainTexture.needsUpdate = true;
 		} );
 
-
+		// PATCH (voice-boat lighting-overhaul round): img/mountains.png's opaque (silhouette)
+		// pixels are pure black RGB (0,0,0) with the shape carried entirely in the alpha channel
+		// (verified by sampling the file directly) — the ORIGINAL code fed it in as `map`, which
+		// multiplies texture RGB by material.color, so black*anything=black: the mountains could
+		// only ever render as a flat black cutout, completely uncontrollable by lighting, which is
+		// a real part of why they read as "ugly and hard to read" against every sky. Feeding the
+		// same texture in as `alphaMap` instead (shape only, RGB ignored) and driving `color`
+		// separately lets ApplyLighting() below tint them toward each preset's own haze colour —
+		// combined with `fog: true` (opts into the scene's THREE.FogExp2, see InitializeScene),
+		// that produces real atmospheric perspective (the far mountains fade toward the horizon
+		// colour with distance) instead of a hard graphic silhouette stamped on top of the sky.
+		// `opacity` is knocked down slightly from fully-opaque so even the nearest ridge line
+		// blends a little rather than reading as a paper cutout — the "honest, scaled-back" half of
+		// the brief's mountain option, applied a little rather than all the way (the tint+fog were
+		// enough on their own; see checkpoints/lighting-overhaul.md's per-preset screenshots).
 		var mountainsMaterial = new THREE.MeshBasicMaterial( {
-			map: mountainTexture,
+			alphaMap: mountainTexture,
+			color: new THREE.Color( 0x8fa3b0 ), // placeholder — ApplyLighting() sets this per preset
+			opacity: 0.92,
 			transparent: true,
+			fog: true,
 			side: THREE.BackSide,
 			depthWrite: false
 		} );
+		// Read by ApplyLighting() below (guarded — undefined until this line runs; see the
+		// LoadMountains-before-LoadSkyBox reordering note in InitializeScene for why that's safe).
+		demo.ms_MountainsMaterial = mountainsMaterial;
 
 		var addMountain = function addMountain( size ) {
 
@@ -578,88 +714,47 @@ var DEMO =
 
 	},
 
+	// PATCH (voice-boat lighting-overhaul round): rewritten around FFT_OCEAN_LIGHTING_PRESETS
+	// (module scope, top of file) instead of an inline six-way switch. `key` may be one of the
+	// three new preset names ("dawn"|"day"|"dusk") OR one of the six old ones, resolved through
+	// FFT_OCEAN_LEGACY_PRESET_ALIASES — same "accept the old value, remap it, proceed exactly as
+	// if the new value had been passed" pattern as the rest of this round's backwards tolerance.
 	UpdateEnvironment : function UpdateEnvironment( key ) {
 
-		var textureName = '';
-		var textureExt = ".jpg";
-		var directionalLightPosition = null;
-		var directionalLightColor = null;
-		var raining = false;
-		// PATCH (voice-boat wind-visibility round): per-preset light intensity — previously a
-		// single value (1.5) set once in InitializeScene and never varied by preset. Defaults to
-		// that same 1.5 for every preset except "day" below, so this is a purely additive change
-		// for everything but the one preset feedback called out as harsh.
-		var directionalLightIntensity = 1.5;
+		var resolvedKey = FFT_OCEAN_LIGHTING_PRESETS.hasOwnProperty( key )
+			? key
+			: FFT_OCEAN_LEGACY_PRESET_ALIASES[ key ];
+		var preset = FFT_OCEAN_LIGHTING_PRESETS[ resolvedKey ];
+		if ( preset === undefined ) {
+			return;
+		}
 
-		switch( key ) {
-			case 'night':
-				textureName = 'grimmnight';
-				directionalLightPosition = new THREE.Vector3( -0.3, 0.3, 1 );
-				directionalLightColor = new THREE.Color( 1, 1, 1 );
-				raining = true;
-				break;
-			case 'morning':
-				textureName = 'clouds';
-				directionalLightPosition = new THREE.Vector3( -1, 0.5, 0.8 );
-				directionalLightColor = new THREE.Color( 1, 0.95, 0.8 );
-				break;
-			case 'day':
-				// PATCH (voice-boat wind-visibility round): softened per live-testing feedback
-				// ("hard on the eyes") — more overhead (higher Y component -> less grazing-angle
-				// glare/hotspot on the water's specular highlight), a touch dimmer, and a slightly
-				// cooler/less saturated tint so the hull and sails read with more contrast against
-				// the water instead of blowing out. Every other preset above/below is untouched.
-				textureName = 'sky';
-				directionalLightPosition = new THREE.Vector3( -0.35, 0.85, -0.4 );
-				directionalLightColor = new THREE.Color( 0.94, 0.92, 0.9 );
-				directionalLightIntensity = 1.05;
-				break;
-			case 'cloudy':
-				textureName = 'miramar';
-				directionalLightPosition = new THREE.Vector3( 0.3, 1.0, 0.5 );
-				directionalLightColor = new THREE.Color( 0.9, 0.95, 1 );
-				raining = true;
-				break;
-			case 'sunset':
-				textureName = 'sunset';
-				directionalLightPosition = new THREE.Vector3( -0.7, 0.2, -1 );
-				directionalLightColor = new THREE.Color( 1, 0.8, 0.5 );
-				break;
-			case 'interstellar':
-				textureName = 'interstellar';
-				directionalLightPosition = new THREE.Vector3( -0.7, 1.0, -0.4 );
-				directionalLightColor = new THREE.Color( 0.8, 1.0, 0.95 );
-				break;
-			case 'apocalypse':
-				textureName = 'violent_days';
-				directionalLightPosition = new THREE.Vector3( 1, 0.3, 1 );
-				directionalLightColor = new THREE.Color( 1, 0.85, 0.3 );
-				break;
-			default:
-				return;
+		this.ms_Environment = resolvedKey;
+		this.ms_Raining = false;
+		this.ms_soundRain.pause();
+
+		// Fresh copy (not the preset object itself) — SetLightingParams()/the settings panel's live
+		// sliders mutate this in place afterward, and mutating the shared preset object would mean
+		// a slider drag today permanently alters what picking this preset gives you next time.
+		this.ms_LightingParams = {
+			sunElevationDeg: preset.lighting.sunElevationDeg,
+			sunAzimuthDeg: preset.lighting.sunAzimuthDeg,
+			sunIntensity: preset.lighting.sunIntensity,
+			ambientIntensity: preset.lighting.ambientIntensity,
+			exposure: preset.lighting.exposure,
+			fogDensity: preset.lighting.fogDensity
 		};
+		this.ms_LightingColors = preset;
+		this.ApplyLighting();
 
-		this.ms_Environment = key;
-		this.ms_Raining = raining;
-		this.ms_MainDirectionalLight.position.copy( directionalLightPosition );
-		this.ms_MainDirectionalLight.color.copy( directionalLightColor );
-		// PATCH (voice-boat wind-visibility round): see directionalLightIntensity declaration above.
-		this.ms_MainDirectionalLight.intensity = directionalLightIntensity;
-		this.ms_Ocean.materialOcean.uniforms.u_sunDirection.value.copy( this.ms_MainDirectionalLight.position );
-		if ( raining ) {
-			this.ms_soundRain.play();
-		}
-		else {
-			this.ms_soundRain.pause();
-		}
-		
+		var textureExt = ".jpg";
 		var sources = [
-			'img/' + textureName + '_west' + textureExt,
-			'img/' + textureName + '_east' + textureExt,
-			'img/' + textureName + '_up' + textureExt,
-			'img/' + textureName + '_down' + textureExt,
-			'img/' + textureName + '_south' + textureExt,
-			'img/' + textureName + '_north' + textureExt
+			'img/' + preset.textureName + '_west' + textureExt,
+			'img/' + preset.textureName + '_east' + textureExt,
+			'img/' + preset.textureName + '_up' + textureExt,
+			'img/' + preset.textureName + '_down' + textureExt,
+			'img/' + preset.textureName + '_south' + textureExt,
+			'img/' + preset.textureName + '_north' + textureExt
 		];
 		var images = [];
 
@@ -682,13 +777,103 @@ var DEMO =
 		for ( var i = 0, il = sources.length; i < il; ++ i ) {
 			loadTexture( i );
 		}
-		
+
 		cubeMap.format = THREE.RGBFormat;
 		cubeMap.generateMipmaps = false;
 		cubeMap.magFilter = THREE.LinearFilter;
 		cubeMap.minFilter = THREE.LinearFilter;
 
 		this.ms_SkyBox.material.uniforms['tCube'].value = cubeMap;
+	},
+
+	// PATCH (voice-boat lighting-overhaul round): partial live-update of the numeric lighting rig
+	// (any subset of sunElevationDeg/sunAzimuthDeg/sunIntensity/ambientIntensity/exposure/
+	// fogDensity) without touching which preset's colours/skybox are active — this is what the
+	// settings panel's Lighting sliders call (via captain-ocean/src/app.ts's applyLightingFromConfig,
+	// one field at a time or as a batch) so dragging "Sun elevation" mid-session doesn't reset the
+	// skybox or the other five numbers. `this.ms_LightingParams` must already exist (UpdateEnvironment
+	// always runs at boot before any live-apply callback can fire — see app.ts's script-ordering note).
+	SetLightingParams : function SetLightingParams( params ) {
+		for ( var field in params ) {
+			if ( params.hasOwnProperty( field ) ) {
+				this.ms_LightingParams[ field ] = params[ field ];
+			}
+		}
+		this.ApplyLighting();
+	},
+
+	// PATCH (voice-boat lighting-overhaul round): the actual rig math — converts
+	// this.ms_LightingParams' elevation/azimuth into a direction vector and applies it plus every
+	// other numeric/colour field to the directional light, ambient light, scene fog, mountains,
+	// and the ocean shader's own sun-direction uniform (preserving the pre-existing "the ocean
+	// mirrors demo.js's directional light" wiring — see the u_sunDirection line below). Called by
+	// both UpdateEnvironment (full preset switch) and SetLightingParams (partial live tweak).
+	//
+	// Direction convention: `sunAzimuthDeg` uses the SAME bearing convention as
+	// captain-ocean/src/driver.ts's bearingToXZ (0 = world -Z, positive = clockwise viewed from
+	// above) — see CaptainConfig.visuals.lighting's header comment in config.ts for why that
+	// specific convention is what keeps the sun's glitter path off the camera's own view axis.
+	ApplyLighting : function ApplyLighting() {
+
+		var params = this.ms_LightingParams;
+		var colors = this.ms_LightingColors;
+		if ( params === undefined || colors === undefined ) {
+			return; // ApplyLighting was somehow called before any preset was ever applied.
+		}
+
+		var elevationRad = params.sunElevationDeg * Math.PI / 180;
+		var azimuthRad = params.sunAzimuthDeg * Math.PI / 180;
+		var cosElevation = Math.cos( elevationRad );
+		var sunDirection = new THREE.Vector3(
+			Math.sin( azimuthRad ) * cosElevation,
+			Math.sin( elevationRad ),
+			-Math.cos( azimuthRad ) * cosElevation
+		);
+
+		this.ms_MainDirectionalLight.position.copy( sunDirection );
+		this.ms_MainDirectionalLight.color.copy( colors.lightColor );
+		this.ms_MainDirectionalLight.intensity = params.sunIntensity * params.exposure;
+
+		this.ms_AmbientLight.color.copy( colors.ambientColor );
+		this.ms_AmbientLight.intensity = params.ambientIntensity * params.exposure;
+
+		if ( this.ms_Scene.fog ) {
+			this.ms_Scene.fog.color.copy( colors.fogColor );
+			this.ms_Scene.fog.density = params.fogDensity;
+		}
+
+		// Guarded: at boot, LoadMountains runs before LoadSkyBox (see InitializeScene's PATCH note)
+		// so this is already populated by the time UpdateEnvironment's first call reaches here —
+		// the guard only protects a hypothetical future caller that invokes ApplyLighting even
+		// earlier than that.
+		if ( this.ms_MountainsMaterial ) {
+			this.ms_MountainsMaterial.color.copy( colors.mountainColor );
+		}
+
+		// Unchanged wiring from before this round: the ocean shader reads the SAME sun direction
+		// the scene's own directional light uses, so the water's specular highlight always lines
+		// up with wherever the light actually is.
+		this.ms_Ocean.materialOcean.uniforms.u_sunDirection.value.copy( sunDirection );
+
+		// PATCH (voice-boat lighting-overhaul round): the "ocean handshake" — a concurrent agent
+		// owns js/effects/Ocean.js and the ocean-spectrum/wave shaders and must NOT be edited here,
+		// but the ocean's own visual tone (e.g. how it tints its reflection/refraction blend) may
+		// reasonably want to track the active lighting rig without this file importing/depending on
+		// that code, and without that code importing this one (both are classic scripts sharing
+		// only `window`). Exposed as a plain global, refreshed on every ApplyLighting call (preset
+		// switch OR a single live-tuned field) — read-only from the ocean side by convention, this
+		// file is the sole writer.
+		window.__captainLighting = {
+			sunDirection: { x: sunDirection.x, y: sunDirection.y, z: sunDirection.z },
+			sunElevationDeg: params.sunElevationDeg,
+			sunAzimuthDeg: params.sunAzimuthDeg,
+			sunIntensity: params.sunIntensity,
+			ambientIntensity: params.ambientIntensity,
+			exposure: params.exposure,
+			fogDensity: params.fogDensity,
+			lightColor: { r: colors.lightColor.r, g: colors.lightColor.g, b: colors.lightColor.b },
+			preset: this.ms_Environment
+		};
 	},
 
 	Display : function () {

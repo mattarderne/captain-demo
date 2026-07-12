@@ -65,11 +65,15 @@ THREE.ShaderLib['ocean_main'] = {
 		'vec3 hdr (vec3 color, float exposure) {',
 			'return 1.0 - exp(-color * exposure);',
 		'}',
-		
+
 		THREE.ShaderChunk["screenplane_pars_fragment"],
+		// PATCH (voice-boat sea-state-overhaul round): declares `u_size`, now sampled below to
+		// match FFTOceanShader.js's `oceanfft_vertex` displacement lookup — see that chunk's PATCH
+		// comment for the full rationale (was a hardcoded `* 0.002`, decoupled from `u_size`).
+		THREE.ShaderChunk["oceanfft_pars_fragment"],
 
 		'void main (void) {',
-			'vec3 normal = texture2D( u_normalMap, vWorldPosition.xz * 0.002 ).rgb;',
+			'vec3 normal = texture2D( u_normalMap, vWorldPosition.xz / u_size ).rgb;',
 			'vec3 view = normalize( vCamPosition - vWorldPosition );',
 			
 			// Compute the specular factor

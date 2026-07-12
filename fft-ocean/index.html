@@ -56,21 +56,27 @@
 	</head>
 	<body>
 			
+		<!-- PATCH (voice-boat lighting-overhaul round): six presets -> three curated, verified-
+		     readable states (dawn/day/dusk) — see port/fft-ocean/js/demo.js's
+		     FFT_OCEAN_LIGHTING_PRESETS and port/captain-ocean/checkpoints/lighting-overhaul.md. -->
 		<div id="env-selector">
 			<ul>
-				<li key="night">Night</li>
-				<li key="morning">Morning</li>
+				<li key="dawn">Dawn</li>
 				<li key="day">Day</li>
-				<li key="cloudy">Cloudy</li>
-				<li key="sunset">Sunset</li>
-				<li key="interstellar">Interstellar</li>
-				<li key="apocalypse">Apocalypse</li>
+				<li key="dusk">Dusk</li>
 			</ul>
 		</div>
 
-		<script src="js/libs/three.min.js"></script>		
+		<script src="js/libs/three.min.js"></script>
 		<script src="js/libs/dat.gui.min.js"></script>
-		<script src="js/libs/jquery-2.1.4.min.js"></script>
+		<!-- PATCH (voice-boat lighting-overhaul round): removed a stray
+		     <script src="js/libs/jquery-2.1.4.min.js"> tag found here — that file does not exist in
+		     this repo (js/libs/ only ships three.min.js/dat.gui.min.js/messg.min.js) and never has;
+		     the stage-1 spike's whole point was rewriting demo.js's jQuery call-sites to vanilla DOM
+		     specifically because that 404 was aborting DEMO.Initialize() before InitCommands()/
+		     Resize() ran (see demo.js's InitGui/InitCommands PATCH notes and the "stage 2" comment
+		     below, which already documented the tag as removed). No vanilla-DOM code in this file
+		     depends on jQuery — confirmed via a clean network tab on a real page load. -->
 		<script src="js/libs/messg.min.js"></script>
 		<script src="js/controls/OrbitControls.js"></script>
 		<script src="js/shaders/ScreenSpaceShader.js"></script>

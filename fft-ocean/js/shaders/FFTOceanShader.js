@@ -103,6 +103,17 @@ THREE.ShaderLib['ocean_initial_spectrum'] = {
 		"u_wind": { type: "v2", value: new THREE.Vector2(10.0, 10.0) },
 		"u_resolution": { type: "f", value: 512.0 },
 		"u_size": { type: "f", value: 250.0 },
+		// PATCH (voice-boat sea-state-overhaul round): sharpens the directional spreading lobe
+		// below (the "cosPhi" term) beyond the baseline Horvath/Tessendorf formula. 1.0 reproduces
+		// the ORIGINAL formula exactly (byte-identical spectrum shape — this is the safe default
+		// for anyone constructing an Ocean without passing INITIAL_DIRECTIONALITY); values > 1.0
+		// raise |2*cosPhi^2 - 1| to that power, narrowing the downwind energy cone (waves read as
+		// travelling in ONE direction rather than a broad fan) without touching the isotropic
+		// pieces of the spectrum (Bl/Bh/Lpm/Fm) that set overall energy vs. wavenumber. See
+		// Ocean.js's `directionality` field (JS-side default 1.0, same reasoning) and
+		// captain-ocean/src/app.ts's `directionalityToExponent()` for how the live config's 0..1
+		// `visuals.waveDirectionality` slider maps to this exponent.
+		"u_directionality": { type: "f", value: 1.0 },
 	},
 	fragmentShader: [
 
@@ -114,7 +125,8 @@ THREE.ShaderLib['ocean_initial_spectrum'] = {
 		'uniform vec2 u_wind;',
 		'uniform float u_resolution;',
 		'uniform float u_size;',
-		
+		'uniform float u_directionality;',
+
 		'float square (float x) {',
 			'return x * x;',
 		'}',
@@ -165,7 +177,18 @@ THREE.ShaderLib['ocean_initial_spectrum'] = {
 
 			'float cosPhi = dot(normalize(u_wind), normalize(K));',
 
-			'float S = (1.0 / (2.0 * PI)) * pow(k, -4.0) * (Bl + Bh) * (1.0 + Delta * (2.0 * cosPhi * cosPhi - 1.0));',
+			// PATCH (voice-boat sea-state-overhaul round): `dirLobe` is the original Horvath/
+			// Tessendorf directional term (cos(2*theta), i.e. a bimodal front/back lobe aligned
+			// with the wind). `u_directionality == 1.0` (Ocean.js's/demo.js's default) reproduces
+			// the original `(2.0 * cosPhi * cosPhi - 1.0)` term exactly (pow(x, 1.0) == x). Raising
+			// the exponent sharpens the lobe — energy concentrates more tightly around the wind
+			// axis — without changing the sign (still front/back symmetric) or the isotropic
+			// energy terms (Bl + Bh) that set how much total energy exists at this wavenumber.
+			'float dirLobe = 2.0 * cosPhi * cosPhi - 1.0;',
+			'float dirSign = dirLobe < 0.0 ? -1.0 : 1.0;',
+			'float dirSharpened = dirSign * pow(abs(dirLobe), u_directionality);',
+
+			'float S = (1.0 / (2.0 * PI)) * pow(k, -4.0) * (Bl + Bh) * (1.0 + Delta * dirSharpened);',
 
 			'float dk = 2.0 * PI / u_size;',
 			'float h = sqrt(S / 2.0) * dk;',
@@ -347,15 +370,36 @@ THREE.ShaderChunk[ "oceanfft_pars_vertex" ] = [
 
 THREE.ShaderChunk[ "oceanfft_vertex" ] = [
 
-	'vec3 displacement = texture2D( u_displacementMap, worldPosition.xz * 0.002 ).rgb * ( u_geometrySize / u_size );',
+	// PATCH (voice-boat sea-state-overhaul round): was `worldPosition.xz * 0.002` — a HARDCODED
+	// world-space tiling constant (1 texture repeat every 500 world units) that ignored `u_size`
+	// entirely. That decoupling meant growing `u_size` (the FFT spectrum's own physical domain —
+	// what actually controls which wavelengths the wind-driven Phillips spectrum can represent,
+	// via wavevectors K = 2*PI*(n,m)/u_size) never changed the on-screen apparent wavelength: a
+	// longer wind-driven sea (bigger `u_size` needed so its longer dominant wavelength doesn't
+	// alias into the lowest FFT bin) still got display-sampled at the same fixed 500-unit tile,
+	// so the "bigger seas at higher wind" the spectrum math was already computing correctly (see
+	// FFTOceanShader.js's ocean_initial_spectrum — Bl/Bh/kp all scale with wind speed) never
+	// reliably reached the screen — this is the root of the "just bigger wobble, not longer
+	// waves" complaint. `u_size` is now the SINGLE source of truth for both the spectrum's
+	// internal domain AND the on-screen tiling scale (1 texture repeat == `u_size` world units) —
+	// must stay pixel-identical to the fragment shader's normal-map lookup below (OceanShader.js's
+	// `ocean_main` fragmentShader), or displacement and shading normals desync.
+	'vec3 displacement = texture2D( u_displacementMap, worldPosition.xz / u_size ).rgb * ( u_geometrySize / u_size );',
 	'vec4 oceanfftWorldPosition = worldPosition + vec4( displacement, 0.0 );',
-	
+
 ].join('\n');
 
 THREE.ShaderChunk[ "oceanfft_pars_fragment" ] = [
-  
+
+	// PATCH (voice-boat sea-state-overhaul round): shared with oceanfft_pars_vertex's `u_size`
+	// declaration (same uniform, same THREE.UniformsLib["oceanfft"] entry) — needed here now that
+	// OceanShader.js's `ocean_main` fragment shader samples the normal map at `worldPosition.xz /
+	// u_size` instead of the old hardcoded `* 0.002`, to match the vertex shader's displacement
+	// lookup above pixel-for-pixel.
+	'uniform float u_size;',
+
 ].join('\n');
 
 THREE.ShaderChunk[ "oceanfft_fragment" ] = [
-	
+
 ].join('\n');

@@ -47,6 +47,11 @@ THREE.Ocean = function (renderer, camera, scene, options) {
 	this.windY = optionalParameterArray(options.INITIAL_WIND, 1, 10.0),
 	this.size = optionalParameter(options.INITIAL_SIZE, 250.0),
 	this.choppiness = optionalParameter(options.INITIAL_CHOPPINESS, 1.5);
+	// PATCH (voice-boat sea-state-overhaul round): directional-spreading sharpening exponent fed
+	// to ocean_initial_spectrum's u_directionality uniform (see FFTOceanShader.js's PATCH comment
+	// there) — 1.0 reproduces the original Horvath/Tessendorf spread term exactly, so this default
+	// is a safe no-op for anyone constructing THREE.Ocean without passing INITIAL_DIRECTIONALITY.
+	this.directionality = optionalParameter(options.INITIAL_DIRECTIONALITY, 1.0);
 	
 	this.matrixNeedsUpdate = false;
 	
@@ -125,6 +130,10 @@ THREE.Ocean = function (renderer, camera, scene, options) {
 	});
 	this.materialInitialSpectrum.uniforms.u_wind = { type: "v2", value: new THREE.Vector2() };
 	this.materialInitialSpectrum.uniforms.u_resolution = { type: "f", value: this.resolution };
+	// PATCH (voice-boat sea-state-overhaul round): see this.directionality above / FFTOceanShader.js's
+	// u_directionality PATCH comment. Set once here (constructor default) and refreshed every
+	// renderInitialSpectrum() call below, mirroring u_wind/u_size's own pattern exactly.
+	this.materialInitialSpectrum.uniforms.u_directionality = { type: "f", value: this.directionality };
 	this.materialInitialSpectrum.depthTest = false;
 	
 	// 4 - Phases used to animate heightmap
@@ -280,6 +289,10 @@ THREE.Ocean.prototype.renderInitialSpectrum = function () {
 	this.scene.overrideMaterial = this.materialInitialSpectrum;
 	this.materialInitialSpectrum.uniforms.u_wind.value.set( this.windX, this.windY );
 	this.materialInitialSpectrum.uniforms.u_size.value = this.size;
+	// PATCH (voice-boat sea-state-overhaul round): re-read every re-seed, same as u_wind/u_size
+	// above — renderInitialSpectrum() only runs when `this.changed` is true (Ocean.js's render()),
+	// so this is a real spectrum re-seed on directionality change, not a per-frame tint.
+	this.materialInitialSpectrum.uniforms.u_directionality.value = this.directionality;
 	this.renderer.render(this.scene, this.oceanCamera, this.initialSpectrumFramebuffer, true);
 	
 };
