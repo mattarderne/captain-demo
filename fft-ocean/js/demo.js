@@ -229,6 +229,27 @@ var DEMO =
 		// not by care taken elsewhere.
 		this.ms_Scene.fog = new THREE.FogExp2( 0x8fa3b0, 0.000008 );
 
+		// PATCH (voice-boat battle2-render round): two single-shot, reusable flash sprites for
+		// battle event VFX (phase-2 brief item 4) — a muzzle flash (enemy cannon fire) and a splash
+		// (a miss landing near the player). Built here (synchronous, unlike the async Black Pearl
+		// OBJ load below) so window.DEMO.ms_MuzzleFlash/ms_Splash are never undefined by the time
+		// captain-ocean/src/app.ts reads them — same "never undefined" story as ms_WindStreaks.
+		// THREE.Sprite always faces the camera, which is exactly what a small flash "blip" wants —
+		// no orientation bookkeeping needed, no texture required (a flat-colored sprite reads fine
+		// at this size/duration). Hidden by default; captain-ocean/src/driver.ts's
+		// triggerMuzzleFlash/triggerSplash own all positioning/show/hide from here on.
+		function buildFlashSprite( color ) {
+			var material = new THREE.SpriteMaterial( { color: color, transparent: true, opacity: 0.9, depthWrite: false } );
+			var sprite = new THREE.Sprite( material );
+			sprite.scale.set( 60, 60, 1 );
+			sprite.visible = false;
+			return sprite;
+		}
+		this.ms_MuzzleFlash = buildFlashSprite( 0xffcc55 );
+		this.ms_Splash = buildFlashSprite( 0xeaf6ff );
+		this.ms_Scene.add( this.ms_MuzzleFlash );
+		this.ms_Scene.add( this.ms_Splash );
+
 		// Add Black Pearl
 		var loader = new THREE.OBJMTLLoader( this.ms_Loader );
 		this.ms_BlackPearl = null;
@@ -316,6 +337,42 @@ var DEMO =
 
 			DEMO.ms_BlackPearlShip.add( object );
 			DEMO.ms_BlackPearl = object;
+
+			// PATCH (voice-boat battle2-render round): clone the just-loaded ship model for the NPC
+			// vessel. Cloned INSIDE this same load callback (not deferred) because THREE.Object3D's
+			// clone() needs the fully-built tree (hull meshes + the sails/streamer pivots just above)
+			// to exist first. object.clone() deep-clones the Object3D hierarchy (transforms/children)
+			// but SHARES each Mesh's geometry/material BY REFERENCE (see THREE.Mesh.prototype.clone
+			// in libs/three.min.js: `new this.constructor(this.geometry,this.material)` — the
+			// geometry/material are passed straight through, not copied) — so distinguishing the two
+			// ships means explicitly cloning just the ONE material we want to change, not the whole
+			// set. Per the phase-2 brief ("distinguish her subtly ... not a redesign"): only the sail
+			// material (material_8, the same one identified above) gets a darker, independently-owned
+			// clone; the hull/masts/flags stay the literal SAME THREE.Material instances as the
+			// player's ship.
+			var enemyObject = object.clone();
+			( function tintSailMaterial( node ) {
+				if ( node.material && node.material.name === 'material_8' ) {
+					node.material = node.material.clone();
+					node.material.color.multiplyScalar( 0.6 );
+				}
+				if ( node.children ) {
+					for ( var i = 0; i < node.children.length; i++ ) {
+						tintSailMaterial( node.children[ i ] );
+					}
+				}
+			} )( enemyObject );
+
+			// A top-level group (sibling of ms_GroupShip, not nested under it — the enemy's world
+			// transform is independent of the player's) so captain-ocean/src/driver.ts can drive its
+			// position/rotation directly from battle.getView().npc every frame, through the SAME
+			// worldPositionFromPoseM/headingToYaw transform the player uses (see that file's
+			// "coordinate unification" comment). Hidden until driver.ts has a real NPC pose to apply
+			// (battle disabled, or this callback resolves before the first battle tick).
+			DEMO.ms_EnemyShip = new THREE.Object3D();
+			DEMO.ms_EnemyShip.add( enemyObject );
+			DEMO.ms_EnemyShip.visible = false;
+			DEMO.ms_Scene.add( DEMO.ms_EnemyShip );
 		} );
 
 		// Add rain
