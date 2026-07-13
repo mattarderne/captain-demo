@@ -335,7 +335,17 @@ var DEMO =
 				DEMO.ms_Sails = sailsPivot;
 			}
 
-			DEMO.ms_BlackPearlShip.add( object );
+			// PATCH (voice-boat camera-waterline-fix round): ms_ShipTilt is a NEW node — a child of
+			// ms_BlackPearlShip and (crucially) a SIBLING of ms_Camera (added to ms_BlackPearlShip
+			// directly in Initialize(), untouched here), not an ancestor of it. captain-ocean/src/
+			// driver.ts writes buoyancy heave/pitch/roll onto THIS node instead of onto
+			// ms_GroupShip/ms_BlackPearlShip themselves, so the follow (and helm) camera no longer
+			// inherits wave-driven motion — see driver.ts's header comment for the full before/after
+			// scene-graph story and why the old split (heave on ms_GroupShip, pitch/roll on
+			// ms_BlackPearlShip) never actually achieved that.
+			DEMO.ms_ShipTilt = new THREE.Object3D();
+			DEMO.ms_ShipTilt.add( object );
+			DEMO.ms_BlackPearlShip.add( DEMO.ms_ShipTilt );
 			DEMO.ms_BlackPearl = object;
 
 			// PATCH (voice-boat battle2-render round): clone the just-loaded ship model for the NPC
@@ -369,8 +379,15 @@ var DEMO =
 			// worldPositionFromPoseM/headingToYaw transform the player uses (see that file's
 			// "coordinate unification" comment). Hidden until driver.ts has a real NPC pose to apply
 			// (battle disabled, or this callback resolves before the first battle tick).
+			// PATCH (voice-boat camera-waterline-fix round): mirrors ms_ShipTilt above — no camera is
+			// parented to the enemy today, so this doesn't fix a currently-visible bug for her, but
+			// gives any FUTURE camera the same steady-outer/jiggling-inner split the player gets
+			// instead of re-discovering this round's bug from scratch (see driver.ts's
+			// getEnemyTiltNode comment).
+			DEMO.ms_EnemyTilt = new THREE.Object3D();
+			DEMO.ms_EnemyTilt.add( enemyObject );
 			DEMO.ms_EnemyShip = new THREE.Object3D();
-			DEMO.ms_EnemyShip.add( enemyObject );
+			DEMO.ms_EnemyShip.add( DEMO.ms_EnemyTilt );
 			DEMO.ms_EnemyShip.visible = false;
 			DEMO.ms_Scene.add( DEMO.ms_EnemyShip );
 		} );
