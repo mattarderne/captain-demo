@@ -520,15 +520,21 @@ var DEMO =
 	// anything attached to the ship.
 	InitializeWindStreaks : function InitializeWindStreaks() {
 
-		var STREAK_COUNT = 64;
+		// PATCH (voice-boat battle4-fire-at-will round): 64 -> 128, matching
+		// captain/src/config.ts's `defaultConfig.visuals.streakCount` — see that field's own
+		// interface comment in config.ts for why the pool doubled (roughly) rather than scaling
+		// quadratically with the radius below.
+		var STREAK_COUNT = 128;
 		var STREAK_LENGTH = 70;
 		var STREAK_WIDTH = 3;
-		// Mirrors captain-ocean/src/driver.ts's WIND_STREAK_SPAWN_RADIUS constant — kept as a
-		// separate literal here (this is a classic script, not an ES module, so it can't import
-		// that file's constant) but must stay the same order of magnitude so streaks start out
+		// Mirrors captain-ocean/src/driver.ts's `visuals.streakFieldRadius` (config.ts) default —
+		// kept as a separate literal here (this is a classic script, not an ES module, so it can't
+		// import that config value) but must stay the same order of magnitude so streaks start out
 		// already scattered across the disc the driver recycles them within, instead of all
-		// crowding near the origin on the very first frame.
-		var SPAWN_RADIUS = 900;
+		// crowding near the origin on the very first frame. PATCH (voice-boat battle4-fire-at-will
+		// round): 900 -> 3150 (900 * 3.5), matching config.ts's new default — see
+		// `streakFieldRadius`'s own header comment there for the full rationale.
+		var SPAWN_RADIUS = 3150;
 
 		// Soft alpha-gradient texture — transparent at both ends, faint white in the middle — so
 		// each streak fades in/out along its own length instead of reading as a hard-edged
