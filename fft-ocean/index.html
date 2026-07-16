@@ -11,10 +11,7 @@
 			}
 			
 			#env-selector {
-				position: absolute;
-				left: 5px;
-				top: 10px;
-				z-index: 1;
+				display: none;
 			}
 			
 			#env-selector, #env-selector ul {
@@ -96,33 +93,27 @@
 			var WINDOW = {
 				ms_Width : 0,
 				ms_Height : 0,
-				ms_Callbacks : {
-					70: "WINDOW.ToggleFullScreen()", // Toggle fullscreen
-				},
 
 				Initialize : function () {
 					this.UpdateSize();
 
-					// Create callbacks from keyboard
-					document.onkeydown = function ( inEvent ) { WINDOW.CallAction( inEvent.keyCode ); };
 					window.onresize = function ( inEvent ) {
 						WINDOW.UpdateSize();
 						WINDOW.ResizeCallback( WINDOW.ms_Width, WINDOW.ms_Height );
 					};
 				},
-				
+
 				UpdateSize : function () {
 					this.ms_Width = window.innerWidth ;
 					this.ms_Height = window.innerHeight;
 				},
-				
-				CallAction : function ( inId ) {
-					if ( inId in this.ms_Callbacks ) {
-						eval( this.ms_Callbacks[inId] );
-						return false;
-					}
-				},
-				
+
+				// PATCH (voice-boat keyboard-focus round): the global `document.onkeydown = WINDOW.CallAction`
+				// wiring (and the ms_Callbacks table that fed it, keyCode 70 -> this function) is REMOVED — it
+				// was swallowing every keystroke on the page, including "f" typed into the command input, and
+				// silently toggling fullscreen instead. See captain/src/render/hud.ts's capture-phase
+				// "type-anywhere" listener for the actual keyboard-focus fix. ToggleFullScreen itself is kept,
+				// harmless and unreferenced, in case a future explicit fullscreen BUTTON wants to call it.
 				ToggleFullScreen : function () {
 					if ( !document.fullscreenElement && !document.mozFullScreenElement && !document.webkitFullscreenElement ) {
 						if ( document.documentElement.requestFullscreen ) {
@@ -178,9 +169,8 @@
 		     zero three.js) and starts its own independent requestAnimationFrame loop; see
 		     port/captain-ocean/STAGE2-REPORT.md for the full wiring. -->
 		<script src="../captain-ocean/dist/captain-ocean.js"></script>
-		<!-- PATCH (voice-boat public deploy): BYOK disclaimer + attribution footer. -->
-		<div style="position:fixed;bottom:4px;right:8px;z-index:40;font:10px/1.5 monospace;color:rgba(255,255,255,0.55);text-align:right;pointer-events:none;">
-			Your OpenAI key stays in this browser (localStorage) and is sent only to api.openai.com — no server, no telemetry.<br>
+		<!-- PATCH (voice-boat public deploy): upstream attribution footer. -->
+		<div id="source-attribution" style="position:fixed;bottom:4px;right:8px;z-index:40;font:10px/1.5 monospace;color:rgba(255,255,255,0.55);text-align:right;pointer-events:none;">
 			Ocean: <a style="color:rgba(255,255,255,0.7);pointer-events:auto;" href="https://github.com/jbouny/fft-ocean">fft-ocean</a> (MIT) · Sail data: <a style="color:rgba(255,255,255,0.7);pointer-events:auto;" href="https://github.com/leeboardtools/bythelee">By The Lee</a> (Apache-2.0)
 		</div>
 	</body>

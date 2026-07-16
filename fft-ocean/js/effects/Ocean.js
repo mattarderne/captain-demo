@@ -247,11 +247,26 @@ THREE.Ocean.prototype.update = function () {
 THREE.Ocean.prototype.render = function () {
 
 	this.scene.overrideMaterial = null;
-	
+
 	if (this.changed)
 		this.renderInitialSpectrum();
-	
-	this.mirror.render();
+
+	// PATCH (voice-boat perf round): the mirror reflection is this function's single heaviest
+	// pass (a full extra render of the whole scene) — run it every Nth frame per
+	// window.__captainReflectionInterval (captain/src/config.ts's
+	// visuals.performance.reflectionInterval, pushed by captain-ocean/src/app.ts at boot and live
+	// from the cog's Performance section). Skipped frames keep sampling the previous reflection
+	// texture, whose texture matrix mirror.render() updates in the SAME call — texture and matrix
+	// always stay a consistent pair, so a skip reads as (at most) a one-frame reflection lag, not
+	// a swimming reflection. A standalone shell load never sets the global -> interval 1, the
+	// original every-frame behaviour.
+	this.reflectionFrameCount = ( this.reflectionFrameCount | 0 ) + 1;
+	var reflectionInterval = ( typeof window.__captainReflectionInterval === 'number' && window.__captainReflectionInterval >= 1 )
+		? Math.floor( window.__captainReflectionInterval )
+		: 1;
+	if ( this.reflectionFrameCount % reflectionInterval === 0 ) {
+		this.mirror.render();
+	}
 	this.renderWavePhase();
 	this.renderSpectrum();
 	this.renderSpectrumFFT();

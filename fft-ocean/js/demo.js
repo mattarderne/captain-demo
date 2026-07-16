@@ -66,6 +66,48 @@ var FFT_OCEAN_LEGACY_PRESET_ALIASES = {
 	apocalypse: 'dusk'
 };
 
+// PATCH (voice-boat perf round): GPU quality presets — the FFT ocean is the frame's dominant GPU
+// cost (mirror reflection re-renders the whole scene, then phase/spectrum/2*log2(res) FFT
+// butterfly passes/normal map, all at res^2 texels, on a gres^2-vertex displaced mesh; see
+// effects/Ocean.js's render()). "high" is the shell's original constants; "medium" (the default)
+// is ~a quarter of high's FFT pixel work; "low" is an integrated-GPU/battery fallback.
+// cloudNoiseSize only sizes CloudShader's one-time noise DataTexture (memory, not per-frame work)
+// but is scaled alongside for consistency.
+//
+// Selected via captain/src/config.ts's `visuals.performance.oceanQuality` (the cog's Performance
+// section). Read DIRECTLY from localStorage["captain.config"] here rather than via a window
+// global like __captainAmbientRock/__captainDriverActive, because this runs inside
+// DEMO.Initialize() — BEFORE the captain-ocean bundle's script tag (last in index.html's <body>)
+// has had any chance to set one. Reload-required by nature: the FFT framebuffers and ocean plane
+// geometry are constructed once, below, and never rebuilt. Preset names and the "medium" default
+// must stay in sync with config.ts's PerformanceConfig by hand; a standalone shell load (no
+// stored config) gets "medium" too — a deliberate default change from the original
+// full-resolution constants, per the perf round's brief.
+var FFT_OCEAN_QUALITY_PRESETS = {
+	low:    { fftResolution: 128, geometryResolution: 64,  cloudNoiseSize: 128 },
+	medium: { fftResolution: 256, geometryResolution: 128, cloudNoiseSize: 256 },
+	high:   { fftResolution: 512, geometryResolution: 256, cloudNoiseSize: 512 }
+};
+
+function ReadFFTOceanQualityPreset() {
+	var quality = 'medium';
+	try {
+		var raw = window.localStorage ? localStorage.getItem( 'captain.config' ) : null;
+		if ( raw ) {
+			var parsed = JSON.parse( raw );
+			var stored = parsed && parsed.visuals && parsed.visuals.performance
+				&& parsed.visuals.performance.oceanQuality;
+			if ( typeof stored === 'string' && FFT_OCEAN_QUALITY_PRESETS.hasOwnProperty( stored ) ) {
+				quality = stored;
+			}
+		}
+	}
+	catch ( e ) {
+		// Malformed storage falls back to the default — same tolerance loadConfig() itself has.
+	}
+	return FFT_OCEAN_QUALITY_PRESETS[ quality ];
+}
+
 var DEMO =
 {
 	ms_Renderer : null,
@@ -168,28 +210,74 @@ var DEMO =
 	},
 	
 	InitializeLoader : function InitializeLoader() {
-	
+
 		this.ms_Loader = new THREE.LoadingManager();
-		
-		var log = function( message, type, timeout ) {
-			console.log( message );
-			messg( message, type, timeout );
-		}
-		
-		var delay = 1500;
-		this.ms_Loader.onProgress = function( item, loaded, total ) {
-			log( 'Loaded ' + loaded + '/' + total + ':' + item, 'info', delay );
+
+		// PATCH (voice-boat hit-feedback round): a real full-screen loading overlay with a progress
+		// bar, replacing the old messg() corner toasts ("Loaded 3/12: img/sky/...") — live-testing
+		// verdict was "how long it takes to load isn't clear": the toasts named files, not overall
+		// progress, and nothing on screen said the ship itself (the ~2.9MB BlackPearl.obj, by far
+		// the longest single load) was still on its way while the ocean already rendered around an
+		// empty patch of water. The bar tracks the LoadingManager's own item count (OBJ + MTL +
+		// hull textures + skybox + mountains — everything routed through ms_Loader); a detail line
+		// underneath shows byte-level progress for the ship model specifically (see the OBJ load
+		// call's onProgress in InitializeScene). Errors keep their messg toast AND mark the overlay,
+		// then the overlay still clears on onLoad so a single failed texture can't wedge the game
+		// behind it.
+		var overlay = document.createElement( 'div' );
+		overlay.id = 'loading-overlay';
+		overlay.style.cssText =
+			'position:fixed;inset:0;background:#0b141f;z-index:10000;display:flex;' +
+			'flex-direction:column;align-items:center;justify-content:center;gap:14px;' +
+			'color:#dce8f2;font:14px/1.6 ui-monospace,Menlo,monospace;transition:opacity 450ms ease;';
+		overlay.innerHTML =
+			'<div style="font-size:18px;letter-spacing:2px;">CAPTAIN</div>' +
+			'<div style="width:280px;height:6px;background:#22303e;border-radius:3px;overflow:hidden;">' +
+				'<div id="loading-bar" style="width:0%;height:100%;background:#4da3ff;transition:width 200ms ease;"></div>' +
+			'</div>' +
+			'<div id="loading-label" style="opacity:0.85;">Preparing the sea&hellip;</div>' +
+			'<div id="loading-detail" style="opacity:0.6;font-size:12px;">&nbsp;</div>';
+		document.body.appendChild( overlay );
+		var barEl = overlay.querySelector( '#loading-bar' );
+		var labelEl = overlay.querySelector( '#loading-label' );
+		var detailEl = overlay.querySelector( '#loading-detail' );
+		var overlayDone = false;
+
+		// Byte-level progress for the Black Pearl OBJ — fed by the XHR progress events the OBJ
+		// load call in InitializeScene passes through (see its onProgress argument).
+		this.ms_ReportModelProgress = function ( event ) {
+			if ( overlayDone || !event || !event.lengthComputable ) return;
+			var mb = function ( bytes ) { return ( bytes / ( 1024 * 1024 ) ).toFixed( 1 ); };
+			detailEl.textContent = 'Ship model ' + mb( event.loaded ) + ' / ' + mb( event.total ) + ' MB';
+		};
+
+		this.ms_Loader.onProgress = function ( item, loaded, total ) {
+			console.log( 'Loaded ' + loaded + '/' + total + ': ' + item );
+			if ( overlayDone ) return;
+			barEl.style.width = Math.round( ( loaded / total ) * 100 ) + '%';
+			labelEl.textContent = 'Loading ship & sky… ' + loaded + ' / ' + total;
 		};
 		this.ms_Loader.onLoad = function () {
-			log( 'Loaded.', 'success', delay );
+			console.log( 'Loaded.' );
+			// onLoad fires every time the manager's queue empties — including later, live preset
+			// switches re-loading skybox images — so guard: the overlay only comes down once.
+			if ( overlayDone ) return;
+			overlayDone = true;
+			barEl.style.width = '100%';
+			overlay.style.opacity = '0';
+			setTimeout( function () {
+				if ( overlay.parentNode ) overlay.parentNode.removeChild( overlay );
+			}, 500 );
 		};
 		this.ms_Loader.onError = function () {
-			log( 'Loading error.', 'error', delay );
+			console.log( 'Loading error.' );
+			messg( 'Loading error.', 'error', 1500 );
+			if ( !overlayDone ) labelEl.textContent = 'A load failed — continuing anyway…';
 		};
-		
-		
+
+
 		this.ms_ImageLoader = new THREE.ImageLoader( this.ms_Loader );
-	
+
 	},
 
 	InitializeScene : function InitializeScene() {
@@ -247,8 +335,20 @@ var DEMO =
 		}
 		this.ms_MuzzleFlash = buildFlashSprite( 0xffcc55 );
 		this.ms_Splash = buildFlashSprite( 0xeaf6ff );
+		// PATCH (voice-boat hit-feedback round): a third flash sprite — red, and bigger than the
+		// splash — shown on the ENEMY hull when the player's broadside actually lands (live-testing
+		// verdict: hit and miss both showed the same pale splash, so there was no way to tell you'd
+		// scored). Same synchronous-build/never-undefined story as the two above;
+		// captain-ocean/src/driver.ts's triggerHitFlash owns positioning/show/hide.
+		this.ms_HitFlash = buildFlashSprite( 0xff3524 );
+		// 150 (vs the others' 60): sprites depth-test against her hull, so the flash has to flare
+		// well BEYOND her silhouette to read — and at real broadside range (battle.cannonRangeM
+		// 250m = ~3500 world units) she's small on screen; the size is tuned for legibility there,
+		// not point-blank.
+		this.ms_HitFlash.scale.set( 150, 150, 1 );
 		this.ms_Scene.add( this.ms_MuzzleFlash );
 		this.ms_Scene.add( this.ms_Splash );
+		this.ms_Scene.add( this.ms_HitFlash );
 
 		// Add Black Pearl
 		var loader = new THREE.OBJMTLLoader( this.ms_Loader );
@@ -390,6 +490,12 @@ var DEMO =
 			DEMO.ms_EnemyShip.add( DEMO.ms_EnemyTilt );
 			DEMO.ms_EnemyShip.visible = false;
 			DEMO.ms_Scene.add( DEMO.ms_EnemyShip );
+		},
+		// PATCH (voice-boat hit-feedback round): XHR byte progress for the loading overlay's
+		// detail line — OBJMTLLoader.load's optional 4th argument, passed straight through to
+		// XHRLoader's own progress events. See InitializeLoader's ms_ReportModelProgress.
+		function ( event ) {
+			DEMO.ms_ReportModelProgress( event );
 		} );
 
 		// Add rain
@@ -429,15 +535,21 @@ var DEMO =
 			this.ms_Rain.position.setZ( - size * 0.75 ) ;
 		}
 
+		// PATCH (voice-boat perf round): FFT/geometry/cloud resolutions come from the cog's
+		// Performance quality preset (default "medium" — half the original linear resolution) —
+		// see FFT_OCEAN_QUALITY_PRESETS above. gsize (the ocean plane's world size) is unchanged:
+		// it sets how much water the mesh covers, not how much work is done per frame.
+		var qualityPreset = ReadFFTOceanQualityPreset();
+
 		// Initialize Clouds
-		this.ms_CloudShader = new CloudShader( this.ms_Renderer, 512 );
+		this.ms_CloudShader = new CloudShader( this.ms_Renderer, qualityPreset.cloudNoiseSize );
 		this.ms_CloudShader.cloudMesh.scale.multiplyScalar( 4.0 );
 		this.ms_Scene.add( this.ms_CloudShader.cloudMesh );
 
 		// Initialize Ocean
 		var gsize = 512;
-		var res = 512;
-		var gres = 256;
+		var res = qualityPreset.fftResolution;
+		var gres = qualityPreset.geometryResolution;
 		var origx = -gsize / 2;
 		var origz = -gsize / 2;
 
@@ -989,7 +1101,10 @@ var DEMO =
 		}
 
 		var currentTime = new Date().getTime();
-		this.ms_Ocean.deltaTime = ( currentTime - lastTime ) / 1000 || 0.0;
+		// PATCH (voice-boat perf round): clamped, same reasoning as captain/src/main.ts's frame-dt
+		// clamp — after tab backgrounding/rAF stalls, an unclamped deltaTime feeds the whole absence
+		// into the FFT phase integration in one step (a visible wave-field "jump cut" on return).
+		this.ms_Ocean.deltaTime = Math.min( ( currentTime - lastTime ) / 1000 || 0.0, 0.25 );
 		lastTime = currentTime;
 
 		// Update black ship movements
