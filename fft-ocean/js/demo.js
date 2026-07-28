@@ -350,6 +350,31 @@ var DEMO =
 		this.ms_Scene.add( this.ms_Splash );
 		this.ms_Scene.add( this.ms_HitFlash );
 
+		// PATCH (voice-boat battle-feedback round 2): cannon-range ring — a unit circle in the XZ
+		// plane, positioned on the player's ship and scaled to cannonRangeM * worldUnitsPerMetre
+		// every frame by captain-ocean/src/driver.ts (which also owns its visibility, from
+		// config.visuals.showCannonRange). depthTest false: it's a tactical indicator, so it must
+		// stay legible through wave crests and the hull rather than clipping realistically.
+		{
+			var ringGeometry = new THREE.Geometry();
+			var RING_SEGMENTS = 96;
+			for ( var ringIndex = 0; ringIndex <= RING_SEGMENTS; ringIndex++ ) {
+				var ringAngle = ( ringIndex / RING_SEGMENTS ) * Math.PI * 2;
+				ringGeometry.vertices.push( new THREE.Vector3( Math.cos( ringAngle ), 0, Math.sin( ringAngle ) ) );
+			}
+			var ringMaterial = new THREE.LineBasicMaterial( {
+				color: 0xff7755,
+				transparent: true,
+				opacity: 0.35,
+				depthTest: false,
+				depthWrite: false
+			} );
+			this.ms_RangeRing = new THREE.Line( ringGeometry, ringMaterial );
+			this.ms_RangeRing.position.y = 6;
+			this.ms_RangeRing.visible = false;
+			this.ms_Scene.add( this.ms_RangeRing );
+		}
+
 		// Add Black Pearl
 		var loader = new THREE.OBJMTLLoader( this.ms_Loader );
 		this.ms_BlackPearl = null;
