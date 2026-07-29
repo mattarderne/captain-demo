@@ -186,16 +186,29 @@ var DEMO =
 				var sound = new Audio('');
 
 				if ( sound.canPlayType( 'audio/mp3' ) ) {
-				
+
 					var sound = new Audio( url );
-					
-					sound.addEventListener( 'ended', function() {
-						this.currentTime = 0;
-						this.play();
+
+					// PATCH (voice-boat audio round): native `loop`, replacing the stock shell's
+					// 'ended' handler (which reset currentTime and called play() again). That is
+					// why the sea "clips in and out at random": `ended` only fires once playback
+					// has fully STOPPED, so every loop had an audible hole in it, and restarting
+					// from JS re-enters the decode path — a gap whose length depends on whatever
+					// else the main thread is doing, hence the randomness. The native loop is
+					// handled inside the media element and does not come back through JS at all.
+					sound.loop = true;
+					// Belt and braces for the same symptom: a media element the browser has
+					// suspended (tab backgrounded, decode hiccup) can stall without ever raising
+					// `ended`, leaving the sea silent for good. One cheap poll nudges it back.
+					sound.addEventListener( 'pause', function() {
+						if ( !this.ended && this.currentTime > 0 ) {
+							var resume = this.play();
+							if ( resume && resume.catch ) resume.catch( function() {} );
+						}
 					}, false );
-					
+
 					return sound;
-					
+
 				}
 				
 			}
@@ -326,8 +339,42 @@ var DEMO =
 		// no orientation bookkeeping needed, no texture required (a flat-colored sprite reads fine
 		// at this size/duration). Hidden by default; captain-ocean/src/driver.ts's
 		// triggerMuzzleFlash/triggerSplash own all positioning/show/hide from here on.
+		// PATCH (voice-boat splash round): a soft radial falloff instead of a flat colour.
+		// A THREE.SpriteMaterial with only a `color` renders the sprite's whole quad — so every
+		// flash and splash in the game was a hard-edged SQUARE, which is the "they're currently
+		// just a block" verdict. One 64x64 canvas gradient per colour, generated at boot (no asset
+		// to fetch, no shader), turns the same quad into a soft round puff that reads as fire,
+		// water or smoke depending on its colour and how it is animated.
+		function buildFalloffTexture( r, g, b ) {
+			var canvas = document.createElement( 'canvas' );
+			canvas.width = 64;
+			canvas.height = 64;
+			var ctx = canvas.getContext( '2d' );
+			var gradient = ctx.createRadialGradient( 32, 32, 0, 32, 32, 32 );
+			// Opaque core, quick shoulder, long tail to fully transparent — a hard stop at the rim
+			// would just reinstate the square with rounded corners.
+			gradient.addColorStop( 0.0, 'rgba(' + r + ',' + g + ',' + b + ',1)' );
+			gradient.addColorStop( 0.35, 'rgba(' + r + ',' + g + ',' + b + ',0.75)' );
+			gradient.addColorStop( 0.75, 'rgba(' + r + ',' + g + ',' + b + ',0.2)' );
+			gradient.addColorStop( 1.0, 'rgba(' + r + ',' + g + ',' + b + ',0)' );
+			ctx.fillStyle = gradient;
+			ctx.fillRect( 0, 0, 64, 64 );
+			var texture = new THREE.Texture( canvas );
+			texture.needsUpdate = true;
+			return texture;
+		}
+
 		function buildFlashSprite( color ) {
-			var material = new THREE.SpriteMaterial( { color: color, transparent: true, opacity: 0.9, depthWrite: false } );
+			var material = new THREE.SpriteMaterial( {
+				map: buildFalloffTexture( ( color >> 16 ) & 255, ( color >> 8 ) & 255, color & 255 ),
+				transparent: true,
+				opacity: 0.9,
+				depthWrite: false,
+				// Additive on the bright emissive ones (fire, water spray) makes them glow against
+				// a dark sea instead of reading as a pasted-on decal; the smoke sprite overrides
+				// this back to normal blending, since smoke absorbs light rather than adding it.
+				blending: THREE.AdditiveBlending
+			} );
 			var sprite = new THREE.Sprite( material );
 			sprite.scale.set( 60, 60, 1 );
 			sprite.visible = false;
@@ -335,6 +382,12 @@ var DEMO =
 		}
 		this.ms_MuzzleFlash = buildFlashSprite( 0xffcc55 );
 		this.ms_Splash = buildFlashSprite( 0xeaf6ff );
+		// PATCH (voice-boat splash round): the miss splash was left at buildFlashSprite's stock 60
+		// units and the muzzle flash's 220ms hold — a quarter of the hit flash's size, gone in a
+		// fifth of a second, at broadside range. Live verdict: "the splash wasn't obvious enough on
+		// a miss". A near miss is information the captain acts on (she's short, close the range), so
+		// it needs to read as clearly as a hit does. driver.ts animates it from this base size.
+		this.ms_Splash.scale.set( 130, 130, 1 );
 		// PATCH (voice-boat hit-feedback round): a third flash sprite — red, and bigger than the
 		// splash — shown on the ENEMY hull when the player's broadside actually lands (live-testing
 		// verdict: hit and miss both showed the same pale splash, so there was no way to tell you'd
@@ -346,9 +399,20 @@ var DEMO =
 		// 250m = ~3500 world units) she's small on screen; the size is tuned for legibility there,
 		// not point-blank.
 		this.ms_HitFlash.scale.set( 150, 150, 1 );
+		// PATCH (voice-boat raking round): a smoke puff that lingers after a hit lands. The flash
+		// is instantaneous by design (220-450ms) and so reads as "something happened there";
+		// smoke is what tells you a ship is HURT seconds later, when you have looked back at the
+		// sails and glanced up again. Dark, large, low opacity, held far longer — driver.ts's
+		// triggerSmoke owns position/scale/fade.
+		this.ms_HitSmoke = buildFlashSprite( 0x6b6b6b );
+		// Smoke darkens what is behind it; additive would make it a grey GLOW.
+		this.ms_HitSmoke.material.blending = THREE.NormalBlending;
+		this.ms_HitSmoke.material.opacity = 0.55;
+		this.ms_HitSmoke.scale.set( 220, 220, 1 );
 		this.ms_Scene.add( this.ms_MuzzleFlash );
 		this.ms_Scene.add( this.ms_Splash );
 		this.ms_Scene.add( this.ms_HitFlash );
+		this.ms_Scene.add( this.ms_HitSmoke );
 
 		// PATCH (voice-boat battle-feedback round 2): cannon-range ring — a unit circle in the XZ
 		// plane, positioned on the player's ship and scaled to cannonRangeM * worldUnitsPerMetre
