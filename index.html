@@ -1,1 +1,54 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Captain</title><meta http-equiv="refresh" content="0; url=fft-ocean/index.html"></head><body><a href="fft-ocean/index.html">Enter</a></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Captain</title>
+<style>
+	html, body {
+		margin: 0; min-height: 100%;
+		background: radial-gradient(circle at 50% 20%, #10233a 0%, #05070f 70%);
+		color: #e8f1fa;
+		font: 14px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+	}
+	main { max-width: 640px; margin: 0 auto; padding: 12vh 24px 40px; }
+	h1 { font-size: 13px; letter-spacing: 0.28em; text-transform: uppercase; color: #ffd9a0; margin: 0 0 28px; }
+	a.card {
+		display: block; text-decoration: none; color: inherit; margin-bottom: 14px;
+		padding: 16px 18px; border: 1px solid rgba(140, 190, 235, 0.22); border-radius: 8px;
+		background: rgba(9, 16, 26, 0.6); transition: border-color 0.2s, transform 0.2s;
+	}
+	a.card:hover { border-color: rgba(180, 220, 255, 0.6); transform: translateY(-2px); }
+	a.card b { display: block; font-size: 16px; margin-bottom: 4px; }
+	a.card span { color: #90a6bd; }
+	a.card em { color: #7fc6ff; font-style: normal; }
+	footer { margin-top: 32px; color: #64798f; font-size: 11px; }
+	footer a { color: #90a6bd; }
+</style>
+</head>
+<body>
+<main>
+	<h1>Captain</h1>
+
+	<a class="card" href="planet/index.html">
+		<b>The wind over the ball <em>&mdash; new</em></b>
+		<span>A stylised water-ball with a savage horizon. The wind blows from a point in
+		space and flows over the sphere: dead calm on the nose, hardest on the limb, a
+		sheltered lee full of back-eddies behind. Each boat blankets the air downwind of
+		her, so you can sail over your rival and kill her wind — or drop over the curve
+		and vanish. Ball size and simulation quality are yours to set.</span>
+	</a>
+
+	<a class="card" href="fft-ocean/index.html">
+		<b>The flat ocean</b>
+		<span>The original: a Napoleonic-era ship on an FFT sea, commanded entirely by
+		voice. Needs your own OpenAI key.</span>
+	</a>
+
+	<footer>
+		Ocean rendering from <a href="https://github.com/jbouny/fft-ocean">fft-ocean</a> (MIT).
+		Sail data from <a href="https://github.com/leeboardtools/bythelee">By The Lee</a> (Apache-2.0).
+	</footer>
+</main>
+</body>
+</html>
