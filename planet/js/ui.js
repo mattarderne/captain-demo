@@ -32,13 +32,28 @@
 		var p = P.params;
 		return [
 			{ type: 'head', label: 'The ball' },
-			{ type: 'range', label: 'Ball radius', min: 60, max: 700, step: 5, unit: 'm',
+			{ type: 'range', label: 'Ball radius', min: 25, max: 400, step: 5, unit: 'm',
 			  get: function () { return p.world.radius; },
 			  set: function (v) { p.world.radius = v; },
-			  note: 'Small ball, savage curve — she drops over the horizon in a couple of boat lengths.' },
+			  note: function () {
+				  return 'The boat stays the same size, so this is the curve itself. ' +
+					  'Lookout can see ' + P.World.horizonLOA().toFixed(1) + ' boat lengths.';
+			  } },
+			{ type: 'range', label: 'Boat length', min: 5, max: 40, step: 0.5, unit: 'm',
+			  get: function () { return p.world.boatLOA; },
+			  set: function (v) { p.world.boatLOA = v; } },
 			{ type: 'range', label: 'Boat size', min: 0.4, max: 2.2, step: 0.05, unit: 'x',
 			  get: function () { return p.world.boatScale; },
 			  set: function (v) { p.world.boatScale = v; } },
+
+			{ type: 'head', label: 'The sea' },
+			{ type: 'range', label: 'Chop', min: 0, max: 3, step: 0.05, unit: 'm',
+			  get: function () { return p.sea.chop; },
+			  set: function (v) { p.sea.chop = v; },
+			  note: 'Waves on the ball itself. Flat water and a hull is a clean silhouette a long way off; put a sea on and she comes and goes.' },
+			{ type: 'range', label: 'Wavelength', min: 0.3, max: 3, step: 0.05, unit: 'x',
+			  get: function () { return 1 / p.sea.chopScale; },
+			  set: function (v) { p.sea.chopScale = 1 / Math.max(0.05, v); } },
 
 			{ type: 'head', label: 'Simulation quality' },
 			{ type: 'choice', label: 'Preset', options: ['low', 'medium', 'high', 'ultra'],
@@ -85,16 +100,44 @@
 			  get: function () { return p.wind.separationDeg; },
 			  set: function (v) { p.wind.separationDeg = v; },
 			  note: 'Where the flow lets go of the ball and the sheltered lee begins.' },
-			{ type: 'range', label: 'Lee wind strength', min: 0, max: 0.6, step: 0.01,
+			{ type: 'range', label: 'On the nose', min: 0, max: 1.6, step: 0.05, unit: 'x',
+			  get: function () { return p.wind.noseFrac; },
+			  set: function (v) { p.wind.noseFrac = v; },
+			  note: function () {
+				  return 'Straight into the windward face: ' +
+					  (p.wind.noseFrac * p.wind.speedKts).toFixed(1) + ' kts. Wind it to zero for the ' +
+					  'textbook stagnation point, and a dead calm you cannot sail out of.';
+			  } },
+			{ type: 'range', label: 'On the limb', min: 0.2, max: 2.5, step: 0.05, unit: 'x',
+			  get: function () { return p.wind.limbFrac; },
+			  set: function (v) { p.wind.limbFrac = v; },
+			  note: function () {
+				  return 'The circumference, where it blows hardest: ' +
+					  (p.wind.limbFrac * p.wind.speedKts).toFixed(1) + ' kts.';
+			  } },
+			{ type: 'range', label: 'Lee wind strength', min: 0, max: 1.2, step: 0.02,
 			  get: function () { return p.wind.wakeSpeed; },
-			  set: function (v) { p.wind.wakeSpeed = v; } },
+			  set: function (v) { p.wind.wakeSpeed = v; },
+			  note: function () {
+				  return 'Mean wind behind the ball: ' +
+					  (p.wind.wakeSpeed * p.wind.speedKts).toFixed(1) + ' kts before the eddies ' +
+					  'move it about. A lee, not a hole.';
+			  } },
+			{ type: 'range', label: 'Lee turbulence', min: 0, max: 1.2, step: 0.05,
+			  get: function () { return p.wind.eddy; },
+			  set: function (v) { p.wind.eddy = v; },
+			  note: 'How hard the eddies breathe. At zero the lee is a steady, weak, backed breeze; wind it up and it lulls and puffs on you.' },
+			{ type: 'range', label: 'Eddy size', min: 1, max: 14, step: 0.5,
+			  get: function () { return p.wind.eddyScale; },
+			  set: function (v) { p.wind.eddyScale = v; },
+			  note: 'Higher is finer and busier.' },
 			{ type: 'range', label: 'Lee back-eddy', min: 0, max: 1.5, step: 0.05,
 			  get: function () { return p.wind.recirc; },
 			  set: function (v) { p.wind.recirc = v; } },
-			{ type: 'range', label: 'Lee swirl', min: 0, max: 2, step: 0.05,
+			{ type: 'range', label: 'Lee swirl', min: 0, max: 2.5, step: 0.05,
 			  get: function () { return p.wind.swirl; },
 			  set: function (v) { p.wind.swirl = v; } },
-			{ type: 'range', label: 'Eddy shedding', min: 0, max: 0.3, step: 0.005, unit: 'Hz',
+			{ type: 'range', label: 'Eddy shedding', min: 0, max: 0.4, step: 0.005, unit: 'Hz',
 			  get: function () { return p.wind.shedHz; },
 			  set: function (v) { p.wind.shedHz = v; } },
 			{ type: 'range', label: 'Gustiness', min: 0, max: 0.5, step: 0.01,
@@ -164,7 +207,8 @@
 				input.value = item.get();
 				var show = function () {
 					var v = parseFloat(input.value);
-					out.textContent = (item.step < 1 ? v.toFixed(2) : Math.round(v)) + (item.unit ? ' ' + item.unit : '');
+					var shown = item.step < 0.1 ? v.toFixed(2) : item.step < 1 ? v.toFixed(1) : Math.round(v);
+					out.textContent = shown + (item.unit ? ' ' + item.unit : '');
 				};
 				var apply = function () {
 					item.set(parseFloat(input.value));
@@ -224,7 +268,20 @@
 			}
 
 			host.appendChild(row);
-			if (item.note) host.appendChild(make('p', 'note', item.note));
+
+			// A note may be a live function — the radius and the light-airs floor
+			// both say what the number you are dragging actually buys you.
+			if (item.note) {
+				var note = make('p', 'note');
+				if (typeof item.note === 'function') {
+					var paintNote = function () { note.textContent = item.note(); };
+					paintNote();
+					this.refreshers.push(paintNote);
+				} else {
+					note.textContent = item.note;
+				}
+				host.appendChild(note);
+			}
 		}, this);
 	};
 
@@ -246,6 +303,10 @@
 		this.dirty = el('dirty');
 		this.log = el('log');
 		this.lastEvent = 0;
+		this.gauge = el('trim-gauge');
+		this.gaugeCtx = this.gauge ? this.gauge.getContext('2d') : null;
+		this.hp = { us: el('hp-us'), them: el('hp-them') };
+		this.gunLamps = { port: el('gun-port'), stbd: el('gun-stbd') };
 
 		el('settings-toggle').addEventListener('click', function () { UI.toggleSettings(); });
 		el('settings-close').addEventListener('click', function () { UI.toggleSettings(false); });
@@ -285,9 +346,18 @@
 		r.aw.textContent = boat.aws.toFixed(1) + ' @ ' + Math.abs(Math.round(boat.awa)) + '° ' +
 			(boat.awa >= 0 ? 'S' : 'P');
 		r.zone.textContent = P.Wind.zoneAt(boat.pos);
-		r.trim.textContent = Math.round(boat.sheet) + '°' +
-			(P.params.sim.autoTrim ? ' auto' : '') +
-			(boat.trimEff < 0.85 ? ' — badly set' : '');
+
+		// Trim used to read as a bare angle, which tells you nothing: you cannot
+		// tell whether 49° is right without knowing what the wind wants. Show the
+		// target alongside it, and how much drive the miss is costing.
+		var want = Math.round(P.optimalSheet(boat.twa));
+		var miss = Math.round(boat.sheet) - want;
+		r.trim.textContent = Math.round(boat.sheet) + '° / want ' + want + '°' +
+			(P.params.sim.autoTrim ? ' (auto)'
+				: Math.abs(miss) < 4 ? ' — well set'
+				: (miss > 0 ? ' — sheet in ↑' : ' — ease ↓') +
+				  ' (' + Math.round(boat.trimEff * 100) + '% drive)');
+		r.trim.className = (!P.params.sim.autoTrim && boat.trimEff < 0.8) ? 'v hot' : 'v';
 
 		// "North" is the ball's own pole — as good a datum as any out here.
 		var north = _north.set(0, 1, 0);
@@ -306,7 +376,8 @@
 			  Math.round(sep) + ' m (' + (sep / L).toFixed(1) + ' LOA)'
 			: 'over the curve, ' + Math.round(sep) + ' m';
 		r.rival.className = P.World.rivalVisible ? 'v' : 'v hidden';
-		r.horizon.textContent = Math.round(P.World.horizonRange()) + ' m';
+		r.horizon.textContent = Math.round(P.World.horizonRange()) + ' m (' +
+			P.World.horizonLOA().toFixed(1) + ' LOA)';
 
 		var pct = Math.round(boat.deficit * 100);
 		if (pct > 6) {
@@ -319,6 +390,9 @@
 			this.dirty.style.display = 'none';
 		}
 
+		this.drawGauge();
+		this.updateGunHud(boat, rival);
+
 		var events = P.World.events;
 		if (events.length && events[events.length - 1].at !== this.lastEvent) {
 			this.lastEvent = events[events.length - 1].at;
@@ -327,6 +401,135 @@
 			while (this.log.children.length > 4) this.log.removeChild(this.log.firstChild);
 			setTimeout(function () { if (line.parentNode) line.parentNode.removeChild(line); }, 8000);
 		}
+	};
+
+	// ---- the guns ------------------------------------------------------------
+
+	UI.updateGunHud = function (boat, rival) {
+		if (!P.Guns || !this.hp.us) return;
+		var g = P.params.guns;
+
+		function bar(node, hp) {
+			var pct = P.clamp(hp / 10, 0, 1) * 100;
+			node.style.width = pct + '%';
+			node.className = pct > 60 ? 'hp-fill' : pct > 30 ? 'hp-fill warn' : 'hp-fill bad';
+		}
+		bar(this.hp.us, boat.hp);
+		bar(this.hp.them, rival.hp);
+
+		var sol = P.Guns.solution(boat, rival);
+		var self = this;
+		['port', 'stbd'].forEach(function (s) {
+			var lamp = self.gunLamps[s];
+			if (!lamp) return;
+			var load = boat.guns[s];
+			var bears = sol.side === s && sol.inRange && sol.visible;
+			if (load > 0) {
+				lamp.textContent = s.toUpperCase() + ' ' + Math.ceil(load) + 's';
+				lamp.className = 'lamp loading';
+			} else if (bears) {
+				lamp.textContent = s.toUpperCase() + (sol.raking ? ' RAKE!' : ' READY');
+				lamp.className = 'lamp ' + (sol.raking ? 'rake' : 'ready');
+			} else {
+				lamp.textContent = s.toUpperCase() + ' —';
+				lamp.className = 'lamp';
+			}
+		});
+	};
+
+	// ---- the trim gauge ------------------------------------------------------
+
+	// A plan view of the boat with the wind coming in over her: the boom where
+	// you have actually put it, a ghost boom where the wind wants it, and the
+	// wedge between them. The number told you the sheet angle; it could not tell
+	// you whether that angle was right, which is the only thing you want to know.
+	UI.drawGauge = function () {
+		var ctx = this.gaugeCtx;
+		if (!ctx) return;
+		var boat = P.World.player;
+		var css = this.gauge.clientWidth || 150;
+		if (this.gauge.width !== css * 2) { this.gauge.width = css * 2; this.gauge.height = css * 2; }
+		var W = this.gauge.width, H = this.gauge.height;
+		var cx = W / 2, cy = H * 0.56, r = Math.min(W, H) * 0.40;
+
+		ctx.clearRect(0, 0, W, H);
+
+		// Screen convention: bow up the canvas, starboard to the right, which is
+		// exactly what the follow camera shows you.
+		function pt(deg, rad) {
+			var a = (deg - 90) * P.DEG;
+			return [cx + Math.cos(a) * rad, cy + Math.sin(a) * rad];
+		}
+
+		// The no-go zone, so you can see when you are pinching.
+		ctx.fillStyle = 'rgba(120, 150, 180, 0.10)';
+		ctx.beginPath();
+		ctx.moveTo(cx, cy);
+		ctx.arc(cx, cy, r * 1.08, (-90 - 34) * P.DEG, (-90 + 34) * P.DEG);
+		ctx.closePath();
+		ctx.fill();
+
+		// The hull.
+		ctx.strokeStyle = 'rgba(190, 215, 240, 0.55)';
+		ctx.lineWidth = 2;
+		ctx.beginPath();
+		ctx.ellipse(cx, cy, r * 0.16, r * 0.52, 0, 0, Math.PI * 2);
+		ctx.stroke();
+
+		// Canvas bearings are starboard-positive, same as `twa`. The boom goes to
+		// LEEWARD, so wind over starboard swings it to port, which is +ve here.
+		// Note this is the opposite sign to render.js's `side`, where the model's
+		// local +X is the port side and rotation.y runs the other way.
+		var side = boat.twa >= 0 ? 1 : -1;
+		var want = P.optimalSheet(boat.twa);
+
+		// Where the wind wants the boom.
+		var wg = pt(180 + side * want, r * 0.86);
+		ctx.strokeStyle = 'rgba(150, 200, 245, 0.45)';
+		ctx.lineWidth = 3;
+		ctx.setLineDash([6, 6]);
+		ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(wg[0], wg[1]); ctx.stroke();
+		ctx.setLineDash([]);
+
+		// Where it is.
+		var bg = pt(180 + side * boat.sheet, r * 0.86);
+		var good = boat.trimEff > 0.9;
+		ctx.strokeStyle = good ? '#8fe6b0' : boat.trimEff > 0.7 ? '#ffd9a0' : '#ff9a80';
+		ctx.lineWidth = 5;
+		ctx.lineCap = 'round';
+		ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(bg[0], bg[1]); ctx.stroke();
+
+		// The error, as a wedge you can close by eye.
+		if (Math.abs(boat.sheet - want) > 2) {
+			ctx.fillStyle = 'rgba(255, 150, 110, 0.20)';
+			ctx.beginPath();
+			ctx.moveTo(cx, cy);
+			var a0 = (180 + side * want - 90) * P.DEG, a1 = (180 + side * boat.sheet - 90) * P.DEG;
+			ctx.arc(cx, cy, r * 0.86, Math.min(a0, a1), Math.max(a0, a1));
+			ctx.closePath();
+			ctx.fill();
+		}
+
+		// The wind, an arrow blowing in from where it comes from. `twa` is already
+		// a starboard-positive bearing to the wind's eye, so it plots straight.
+		var from = pt(boat.twa, r * 1.10);
+		var into = pt(boat.twa, r * 0.66);
+		ctx.strokeStyle = '#bfe8ff';
+		ctx.lineWidth = 3;
+		ctx.beginPath(); ctx.moveTo(from[0], from[1]); ctx.lineTo(into[0], into[1]); ctx.stroke();
+		ctx.fillStyle = '#bfe8ff';
+		ctx.beginPath();
+		var head = pt(boat.twa, r * 0.60);
+		var l = pt(boat.twa + 7, r * 0.78), rr = pt(boat.twa - 7, r * 0.78);
+		ctx.moveTo(head[0], head[1]); ctx.lineTo(l[0], l[1]); ctx.lineTo(rr[0], rr[1]);
+		ctx.closePath(); ctx.fill();
+
+		// Drive, as a bar along the bottom.
+		var bw = W * 0.72, bx = (W - bw) / 2, by = H - 18;
+		ctx.fillStyle = 'rgba(140, 190, 235, 0.18)';
+		ctx.fillRect(bx, by, bw, 10);
+		ctx.fillStyle = good ? '#8fe6b0' : boat.trimEff > 0.7 ? '#ffd9a0' : '#ff9a80';
+		ctx.fillRect(bx, by, bw * P.clamp(boat.trimEff, 0, 1), 10);
 	};
 
 	var _north = new THREE.Vector3();
@@ -341,8 +544,16 @@
 		window.addEventListener('keydown', function (e) {
 			if (e.target && /input|textarea|select/i.test(e.target.tagName)) return;
 			UI.keys[e.code] = true;
+			// The arrows are the helm and the sheets. Left to the browser they
+			// also scroll the page and the settings drawer, which made trimming
+			// feel like it was fighting the camera.
+			if (/^Arrow/.test(e.code)) e.preventDefault();
+
 			switch (e.code) {
 				case 'KeyG': UI.toggleSettings(); e.preventDefault(); break;
+				case 'KeyQ': P.Guns.fire(P.World.player, P.World.rival, 'port'); break;
+				case 'KeyE': P.Guns.fire(P.World.player, P.World.rival, 'stbd'); break;
+				case 'KeyF': P.Guns.fire(P.World.player, P.World.rival, null); break;
 				case 'KeyC':
 					var modes = ['follow', 'mast', 'orbit'];
 					P.params.view.camera = modes[(modes.indexOf(P.params.view.camera) + 1) % 3];

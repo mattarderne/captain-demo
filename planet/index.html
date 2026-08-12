@@ -39,6 +39,7 @@
 	#instruments dt { color: var(--dim); }
 	#instruments dd { margin: 0; text-align: right; }
 	#instruments dd.v.hidden { color: #7f93a8; font-style: italic; }
+	#instruments dd.v.hot { color: #ffd9a0; }
 	#big { font-size: 26px; line-height: 1.1; margin: 2px 0 8px; color: #fff; }
 	#big small { font-size: 11px; color: var(--dim); letter-spacing: 0.1em; }
 
@@ -48,6 +49,31 @@
 		color: #ffd9a0; font-size: 11px;
 	}
 	#dirty.bad { background: rgba(190, 50, 40, 0.24); border-color: rgba(255, 130, 110, 0.5); color: #ffc4b4; }
+
+	/* The fight */
+	#fight { margin-top: 9px; border-top: 1px solid var(--edge); padding-top: 8px; }
+	.hp-row { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--dim); margin-bottom: 4px; }
+	.hp-row span:first-child { width: 52px; }
+	.hp-track { flex: 1; height: 7px; background: rgba(140, 190, 235, 0.16); border-radius: 4px; overflow: hidden; }
+	.hp-fill { display: block; height: 100%; width: 100%; background: #8fe6b0; transition: width 0.25s; }
+	.hp-fill.warn { background: #ffd9a0; }
+	.hp-fill.bad { background: #ff8a70; }
+	.lamps { display: flex; gap: 6px; margin-top: 7px; }
+	.lamp {
+		flex: 1; text-align: center; padding: 3px 0; border-radius: 4px; font-size: 10px;
+		border: 1px solid var(--edge); color: var(--dim); background: rgba(9, 16, 26, 0.5);
+	}
+	.lamp.loading { color: #8fa6bd; }
+	.lamp.ready { color: #0b1a12; background: #8fe6b0; border-color: #8fe6b0; }
+	.lamp.rake { color: #2a1206; background: #ffb066; border-color: #ffb066; }
+
+	/* Trim gauge */
+	#trim-wrap {
+		left: 218px; bottom: 14px; width: 158px;
+		background: var(--panel); border: 1px solid var(--edge); border-radius: 6px; padding: 8px;
+	}
+	#trim-gauge { width: 100%; aspect-ratio: 1 / 1; display: block; }
+	#trim-wrap p { margin: 5px 2px 0; color: var(--dim); font-size: 10px; line-height: 1.4; }
 
 	/* Tactician's card */
 	#card-wrap {
@@ -136,6 +162,17 @@
 			<dt>Marlin</dt><dd id="r-rival" class="v">—</dd>
 		</dl>
 		<div id="dirty"></div>
+
+		<div id="fight">
+			<div class="hp-row"><span>Kestrel</span><span class="hp-track"><i id="hp-us" class="hp-fill"></i></span></div>
+			<div class="hp-row"><span>Marlin</span><span class="hp-track"><i id="hp-them" class="hp-fill"></i></span></div>
+			<div class="lamps"><span id="gun-port" class="lamp">PORT</span><span id="gun-stbd" class="lamp">STBD</span></div>
+		</div>
+	</div>
+
+	<div id="trim-wrap" class="hud">
+		<canvas id="trim-gauge"></canvas>
+		<p>Solid boom is where you have it, dashed is where the wind wants it. Bar is the drive you are getting.</p>
 	</div>
 
 	<div id="card-wrap" class="hud">
@@ -146,6 +183,7 @@
 	<div id="log" class="hud"></div>
 
 	<div id="keys" class="hud">
+		<div><b>Q</b> port guns &nbsp; <b>E</b> starboard &nbsp; <b>F</b> whichever bears</div>
 		<div><b>&larr; &rarr;</b> helm &nbsp; <b>&uarr; &darr;</b> sheet &nbsp; <b>T</b> auto-trim</div>
 		<div><b>C</b> camera &nbsp; <b>L</b> streamlines &nbsp; <b>K</b> cones &nbsp; <b>P</b> paint</div>
 		<div><b>G</b> settings &nbsp; <b>H</b> hide HUD &nbsp; <b>Space</b> pause &nbsp; <b>R</b> reset</div>
@@ -170,6 +208,7 @@
 	<script src="js/params.js"></script>
 	<script src="js/windfield.js"></script>
 	<script src="js/sim.js"></script>
+	<script src="js/guns.js"></script>
 	<script src="js/streamers.js"></script>
 	<script src="js/render.js"></script>
 	<script src="js/minimap.js"></script>

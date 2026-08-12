@@ -76,14 +76,24 @@ window.PLANET = window.PLANET || {};
 	// Angle (radians) along the surface between two unit vectors.
 	P.arc = function (a, b) { return Math.acos(P.clamp(a.dot(b), -1, 1)); };
 
-	// Signed angle from `a` to `b` in the tangent plane at `p`, +ve to starboard.
-	// Starboard is the direction (p x a): rotating a about p by a positive angle
-	// swings it that way, which is what the helm and the AI both assume.
+	// Signed angle from `a` to `b` in the tangent plane at `p`, +ve to STARBOARD.
+	//
+	// Starboard is (a x p), not (p x a). Get this backwards and everything reads
+	// mirrored: the helm answers the wrong way, the wind blows over the wrong
+	// side, and the compass counts anticlockwise. The check is the render basis
+	// in render.js — makeBasis(pos x head, pos, head) — where the model's forward
+	// is +Z and up is +Y, so the model's right-hand side lies along (head x pos).
+	// Every sign in the sim is pinned to that.
 	P.signedAngle = function (a, b, p) {
 		var ang = Math.acos(P.clamp(a.dot(b), -1, 1));
 		_cross.crossVectors(a, b);
-		return _cross.dot(p) < 0 ? -ang : ang;
+		return _cross.dot(p) > 0 ? -ang : ang;
 	};
+
+	// A rotation about `p` by a positive angle swings a tangent vector to PORT
+	// (towards p x v). Anything that wants to express "turn this much to
+	// starboard" as an angle goes through here rather than guessing the sign.
+	P.STARBOARD = -1;
 
 	// Re-seat `head` as a unit tangent at `pos` after numerical drift.
 	P.orthonormalise = function (pos, head) {

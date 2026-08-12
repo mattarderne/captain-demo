@@ -47,13 +47,47 @@
 	// Speed of the undisturbed field at `p`, as a fraction of the free stream.
 	// Mirrored in the ball's fragment shader (see render.js, windSpeedAt) so the
 	// painted water and the streamlines agree — keep the two in step.
+	//
+	// The textbook answer for flow round a sphere is 1.5*U*sin(theta), which is
+	// exactly nil at the windward stagnation point. That is true of a sphere in
+	// a wind tunnel and useless as a map: it makes the entire windward face,
+	// the part you look at most, a hole you cannot sail out of.
+	//
+	// So the profile is anchored at two ends instead. `noseFrac` is what blows
+	// straight into the face of the ball, an ordinary breeze; `limbFrac` is the
+	// circumference, where it blows hardest. The sin(theta) shape between them
+	// is the same as the textbook one, just lifted off the floor.
 	Wind.profile = function (theta) {
 		var w = P.params.wind;
 		var sep = w.separationDeg * P.DEG;
-		var potential = 1.5 * Math.sin(theta);
-		var wake = w.wakeSpeed * (0.35 + 0.65 * Math.max(0, Math.sin(theta)));
+		var st = Math.max(0, Math.sin(theta));
+		var potential = w.noseFrac + (w.limbFrac - w.noseFrac) * st;
+		// Barely any sin(theta) shape in the lee: it does not taper away towards
+		// the back pole, it just gets more confused.
+		var wake = w.wakeSpeed * (0.85 + 0.15 * st);
 		var blend = P.smoothstep(sep - 0.30, sep + 0.55, theta);
 		return { potential: potential, wake: wake, blend: blend };
+	};
+
+	// The lee's own turbulence, in [-1, 1]: two scales of wandering eddy on top
+	// of the alternating shed. Mirrored in the ball's fragment shader (leeNoise)
+	// so the mottling you can see on the water is the field you are sailing in.
+	Wind.eddyAt = function (p, phi) {
+		var w = P.params.wind, k = w.eddyScale;
+		var shed = Math.sin(w.shedHz * this.time * P.TAU + phi * 2.0);
+		var fine = P.flowNoise(p.x * k, p.y * k, p.z * k, this.time * 1.3);
+		var coarse = P.flowNoise(p.z * k * 0.45 + 2.0, p.x * k * 0.45, p.y * k * 0.45 - 1.0, this.time * 0.7);
+		return 0.55 * shed + 0.30 * fine + 0.25 * coarse;
+	};
+
+	// A second, independent eddy field. The lee needs two: one to swing the wind
+	// sideways and one to decide how much of it is running back up the ball. Fed
+	// from the same noise with a different offset and rate so they drift apart.
+	Wind.eddyAt2 = function (p, phi) {
+		var w = P.params.wind, k = w.eddyScale;
+		var shed = Math.cos(w.shedHz * this.time * P.TAU * 0.7 + phi * 3.0 + 1.3);
+		var fine = P.flowNoise(p.y * k + 5.5, p.z * k - 3.1, p.x * k + 1.7, this.time * 0.95);
+		return 0.6 * shed + 0.4 * fine;
 	};
 
 	// Tangential wind at unit-sphere point `p`, in knots, written into `out`.
@@ -76,13 +110,31 @@
 		out.copy(_t).multiplyScalar(prof.potential * U);
 
 		if (prof.blend > 0.001) {
-			// Separated flow: reversed and swirling, with the swirl alternating
-			// round the wake axis and in time — that is the shedding.
+			// The lee. Not a hole: a body of air that has let go of the ball and
+			// is rolling around behind it. Three things make it read as eddies
+			// rather than as a dead patch — some of it running back UP the ball
+			// against the free stream, a large sideways component that reverses
+			// as vortices shed off alternate sides, and turbulence of its own on
+			// two scales so no two square metres of it agree for long.
 			var phi = Math.atan2(p.dot(this.refB), p.dot(this.refA));
-			var shed = Math.sin(w.shedHz * this.time * P.TAU + phi * 2.0);
-			_wake.copy(_t).multiplyScalar(-w.recirc).addScaledVector(_b, w.swirl * shed);
+			var e = this.eddyAt(p, phi);
+			var e2 = this.eddyAt2(p, phi);
+
+			// Along the meridian: a mean downwind drift with a varying part of it
+			// running back UP the ball. `leeDrift` keeps the balance positive on
+			// average, which is what makes this a lee and not a blender.
+			var along = w.leeDrift - w.recirc * (0.5 + 0.5 * e2);
+
+			// Across it: the swing, and the reason the lee is worth sailing into.
+			_wake.copy(_t).multiplyScalar(along).addScaledVector(_b, w.swirl * e);
+
+			// Then it is renormalised to the lee's own strength. The DIRECTION is
+			// what the eddies scramble; the strength only breathes a little, so
+			// there is always something in your sails back here.
 			var wl = _wake.length();
-			if (wl > 1e-6) _wake.multiplyScalar(prof.wake * U / wl); else _wake.set(0, 0, 0);
+			var mag = prof.wake * U * P.clamp(1 + w.eddy * 0.5 * e, 0.55, 1.5);
+			if (wl > 1e-6) _wake.multiplyScalar(mag / wl);
+			else _wake.copy(_t).multiplyScalar(mag);
 			out.lerp(_wake, prof.blend);
 		}
 

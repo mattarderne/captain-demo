@@ -122,6 +122,7 @@
 		this.rivalVisible = true;
 		P.Wind.updateDirection();
 		this.refreshShadowGeometry();
+		if (P.Guns) P.Guns.reset();
 	};
 
 	// Shadow size follows boat length, so it stays proportional as the ball grows.
@@ -166,12 +167,21 @@
 		// 3. Steer and sail.
 		for (i = 0; i < this.boats.length; i++) {
 			boat = this.boats[i];
-			if (!boat.isPlayer) this.updateAI(boat, dt);
+			// A ship that has struck stops steering. Her helm goes over and stays.
+			if (boat.struck) boat.rudder *= Math.exp(-dt);
+			else if (!boat.isPlayer) this.updateAI(boat, dt);
 			this.sail(boat, dt);
 		}
 
 		this.separate();
 		this.updateAwareness();
+
+		// Gunnery last: it reads positions and headings that are now settled, and
+		// a ball already in the air keeps flying whatever the ships do under it.
+		if (P.Guns) {
+			P.Guns.tick(dt);
+			P.Guns.updateAI(this.rival, this.player, dt);
+		}
 	};
 
 	// No hull-to-hull sailing: two boats that get within a length and a half of
@@ -246,10 +256,28 @@
 		boat.speed += (target - boat.speed) * (1 - Math.exp(-dt / tau));
 		if (boat.speed < 0) boat.speed = 0;
 
-		// Helm. She needs way on to answer it.
-		var authority = P.clamp(boat.speed / 1.6, 0, 1);
+		// Helm. She needs way on to answer it. Positive rudder is starboard helm,
+		// and starboard is a NEGATIVE rotation about her own up-vector — hence
+		// P.STARBOARD rather than a bare sign that reads either way.
+		//
+		// The 0.14 floor is a trap door. With authority going to a clean zero, a
+		// boat that lost all way could never steer again: no speed, so no helm,
+		// so no way to point at any wind, so no speed. The confused air in the
+		// lee found that hole in about a minute. A real hull always has SOME
+		// steerage from her sails and her heel even when she is barely moving.
+		var authority = P.clamp(0.14 + boat.speed / 1.6, 0, 1);
 		var maxRate = 0.42 * (12.75 / L);        // bigger boat, wider turning circle
-		P.rotateAbout(boat.head, boat.pos, boat.rudder * maxRate * authority * dt);
+		P.rotateAbout(boat.head, boat.pos, P.STARBOARD * boat.rudder * maxRate * authority * dt);
+
+		// In irons. Head to wind with no way on, her sails go aback and she pays
+		// off onto one tack or the other of her own accord — she does not sit
+		// there head to wind for ever, which is what she used to do. Falls off
+		// to whichever side the wind is already on, so she keeps her tack.
+		if (Math.abs(boat.twa) < NO_GO_DEG && boat.speed < 1.2 && boat.windSpeed > 0.5) {
+			var lost = 1 - boat.speed / 1.2;
+			var payRate = 0.30 * lost * P.clamp(boat.windSpeed / 10, 0.25, 1.5) * dt;
+			P.rotateAbout(boat.head, boat.pos, -P.STARBOARD * (boat.twa >= 0 ? 1 : -1) * payRate);
+		}
 
 		// Sail her forward along the great circle under the bow.
 		var travel = boat.speed * dt / R;
@@ -352,10 +380,12 @@
 			_windFrom.copy(boat.wind).multiplyScalar(-1 / boat.windSpeed);
 			var wantTwa = P.signedAngle(_desired, _windFrom, boat.pos) / P.DEG;
 			if (Math.abs(wantTwa) < NO_GO_DEG) {
-				// Dead upwind of where she wants to be: take the nearer tack.
+				// Dead upwind of where she wants to be: take the nearer tack. On
+				// starboard tack (wind over the starboard side) her close-hauled
+				// heading lies NO_GO to port of the wind's eye, and vice versa.
 				var onStarboard = boat.twa >= 0 ? 1 : -1;
 				_desired.copy(_windFrom);
-				P.rotateAbout(_desired, boat.pos, -onStarboard * NO_GO_DEG * P.DEG);
+				P.rotateAbout(_desired, boat.pos, onStarboard * NO_GO_DEG * P.DEG);
 			}
 		}
 
@@ -363,6 +393,9 @@
 		var rudder = P.clamp(err / 25, -1, 1);
 
 		if (seekAir) {
+			// Sniff six lengths out on either bow and lean towards the better air.
+			// `side` is a rotation sign, so the gain it produces is in rotation
+			// terms too; P.STARBOARD converts it into rudder.
 			var here = boat.windSpeed;
 			var gain = 0;
 			for (var side = -1; side <= 1; side += 2) {
@@ -372,6 +405,7 @@
 				P.Wind.sample(_probeWind, _probe, this.shadows, boat.id);
 				gain += side * (_probeWind.length() - here);
 			}
+			gain *= P.STARBOARD;
 			rudder = P.clamp(rudder + P.clamp(gain * 0.22, -0.5, 0.5), -1, 1);
 		}
 
@@ -380,10 +414,23 @@
 
 	// ---- Who can see whom ----------------------------------------------------
 
-	// How far over the curve you can see from a given height, in radians of arc.
-	World.horizonAngle = function (height) {
-		var R = P.params.world.radius;
-		return Math.acos(P.clamp(R / (R + height), -1, 1));
+	World.horizonAngle = function (height) { return P.horizonAngle(height); };
+
+	// How much of the rival is UNDER the curve: 0 with her hull up, 1 with even
+	// her masthead gone. She sinks truck-last and rises truck-first rather than
+	// blinking off, because a hard cut at the horizon makes the curve look fake.
+	//
+	// Two ranges bracket it: `deck` is where her waterline goes, `truck` is where
+	// her masthead follows. Between them she is hull-down.
+	World.rivalHidden = function () {
+		var L = P.boatLength();
+		var sep = P.arc(this.player.pos, this.rival.pos);
+		var eye = P.horizonAngle(L * 1.15);            // our masthead over the curve
+		var deck = eye + P.horizonAngle(L * 0.10);     // ...to her waterline
+		var truck = eye + P.horizonAngle(L * 1.15);    // ...to her masthead
+		if (sep <= deck) return 0;
+		if (sep >= truck) return 1;
+		return (sep - deck) / Math.max(1e-6, truck - deck);
 	};
 
 	World.updateAwareness = function () {
@@ -416,6 +463,12 @@
 	World.horizonRange = function () {
 		// Metres of surface you can see from the masthead — the real "hiding" radius.
 		return this.horizonAngle(P.boatLength() * 1.15) * 2 * P.params.world.radius;
+	};
+
+	// The same thing in boat lengths, which is the number that actually tells you
+	// how savage the ball is. Fixed boat, shrinking ball: this falls.
+	World.horizonLOA = function () {
+		return this.horizonRange() / P.boatLength();
 	};
 
 	P.Boat = Boat;

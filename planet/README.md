@@ -16,11 +16,21 @@ The ball sits in a free stream blowing from a point out in space. Three effects
 stack up, all in `js/windfield.js`:
 
 **Potential flow round a sphere.** Surface speed is `1.5 * U * sin(theta)`,
-`theta` measured from the windward stagnation point. That gives you dead calm on
+`theta` measured from the windward stagnation point. That gives you light air on
 the nose of the ball, half again the free stream on the circumference you see as
 the limb, and a slow decline round towards the back. The same doublet solution is
 evaluated in three dimensions for the streaks flying past out in space, so what
 you see out there and what you feel on the water are the same field.
+
+**A floor under all of it.** The textbook profile goes to exactly zero at both
+poles, and the wake behind the ball went nearly as low, which left two large
+patches of ball that you could drift into and never sail out of. `wind.floor`
+puts a light-airs bottom under the whole sphere, four knots or so at the default.
+A hole is now slow rather than final. Measured on the running sim at `U = 14 kts`:
+
+| theta | 0° | 30° | 60° | 90° | 108° | 122° | 140° | 160° | 180° |
+|---|---|---|---|---|---|---|---|---|---|
+| kts | 4.2 | 11.3 | 18.7 | 21.4 | 20.2 | 15.1 | 8.1 | 6.1 | 5.4 |
 
 **Separation.** Real flow cannot stay attached round the back of a bluff body.
 Past the separation angle (108° by default, and adjustable) the field breaks down
@@ -65,6 +75,20 @@ see her at all.
   dark half is the separated lee. Shaded wedges are dirty air. The dashed ring is
   as far as your lookout can see before the curve gets in the way.
 
+## Seeing her, and not seeing her
+
+Hiding over the curve is the whole idea, so two things enforce it.
+
+The rival sinks as she crosses your horizon: waterline first, masthead last, over
+the stretch between where her deck goes and where her truck follows. She is drawn
+hull-down in between, which is what you actually get at sea.
+
+And the camera is on a leash. Orbit turns round your own boat rather than round
+the ball, and the elevation and range stops are set so the camera's own horizon
+stays inside the masthead horizon it is showing you. At the default radius that
+is 60 m up, seeing 84 m of sea against a 97 m masthead range. You cannot climb
+out of the game and look down at where she went.
+
 ## Controls
 
 | | |
@@ -72,7 +96,7 @@ see her at all.
 | `←` `→` | helm |
 | `↑` `↓` | sheet in / ease |
 | `T` | auto-trim |
-| `C` | camera: follow / masthead / orbit (drag to orbit) |
+| `C` | camera: follow / masthead / orbit (drag to orbit, wheel to pull back) |
 | `L` `P` `K` | streamlines / painted wind / dirty-air cones |
 | `G` | settings |
 | `H` | hide the HUD |
@@ -81,18 +105,37 @@ see her at all.
 
 ## Settings
 
-Everything is live. **Ball radius** (60–700 m) is the big one: the boats, their
-shadows and their turning circles all scale with it, so the tactics hold while the
-horizon comes in or goes out. **Simulation quality** runs low / medium / high /
-ultra as presets, or set the pieces yourself — streamer count and length, flow
-substeps, ball tessellation, pixel ratio, and how many boat shadows the painted
-field resolves. Wind strength, source bearing and elevation, separation angle, lee
-strength, back-eddy, swirl, shedding rate and gustiness are all exposed, as is
-every parameter of the dirty air.
+Everything is live.
+
+**Ball radius**, 25 to 400 m, is the big one. The boat is a fixed 12.8 m, so the
+radius is the curve itself and nothing else. Drag it and the lookout's range goes
+with it:
+
+| radius | 25 m | 60 m | 90 m | 150 m | 400 m |
+|---|---|---|---|---|---|
+| horizon | 3.5 LOA | 6.0 LOA | 7.5 LOA | 10.0 LOA | 16.7 LOA |
+
+At 25 m she is gone three and a half lengths away and you are sailing on a
+beach ball. At 400 m you can see her most of the way round.
+
+**Chop** puts a sea on the ball, in metres. On flat water a hull is a clean
+silhouette from a long way off; put a sea on and she comes and goes in the backs
+of the waves. It displaces the geometry, so ball tessellation is what decides how
+good the horizon looks.
+
+**Light-airs floor** is the bottom under the wind field. Wind it to zero for the
+textbook potential flow, and dead calms at both poles that you cannot escape.
+
+**Simulation quality** runs low / medium / high / ultra as presets, or set the
+pieces yourself: streamer count and length, flow substeps, ball tessellation,
+pixel ratio, and how many boat shadows the painted field resolves. Wind strength,
+source bearing and elevation, separation angle, lee strength, back-eddy, swirl,
+shedding rate and gustiness are all exposed, as is every parameter of the dirty
+air.
 
 ## Layout
 
-    js/core.js        sphere maths, rotations, tangent frames
+    js/core.js        sphere maths, rotations, tangent frames, the sign convention
     js/params.js      every tunable, and the quality presets
     js/windfield.js   the flow field: potential flow, wake, boat shadows
     js/sim.js         boats, polar, geodesic motion, the rival's tactics
