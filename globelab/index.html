@@ -69,6 +69,7 @@
 		<div><span>Side force</span><span class="val" id="r-side">&mdash;</span></div>
 		<div><span>Drive / side</span><span class="val" id="r-ratio">&mdash;</span></div>
 		<div><span>Yaw moment</span><span class="val" id="r-yaw">&mdash;</span></div>
+		<div><span>Leeway</span><span class="val" id="r-leeway">&mdash;</span></div>
 		<div><span>She is</span><span class="val" id="r-yawdir">&mdash;</span></div>
 		<div><span>Her speed</span><span class="val" id="r-speed">&mdash;</span></div>
 	</div>
@@ -212,6 +213,14 @@
 		<button id="b-ctl-sheets">sheets &amp; rudder</button>
 		<button id="b-ctl-trimonly">trim only</button>
 	</div>
+	<div class="row"><label>Rig crosses below <span class="val" id="v-crossat"></span></label>
+		<input type="range" id="s-crossat" min="50" max="180" step="5"></div>
+	<div class="row"><label>Keel grip <span class="val" id="v-keelgrip"></span></label>
+		<input type="range" id="s-keelgrip" min="0.5" max="20" step="0.1"></div>
+	<div class="row"><label>Keel position <span class="val" id="v-keelx"></span></label>
+		<input type="range" id="s-keelx" min="-1.2" max="0.4" step="0.01"></div>
+	<div class="row"><label>Keel steering <span class="val" id="v-keelgain"></span></label>
+		<input type="range" id="s-keelgain" min="0" max="120" step="1"></div>
 	<div class="row"><label>Centre of lateral resistance <span class="val" id="v-clr"></span></label>
 		<input type="range" id="s-clr" min="-0.6" max="0.6" step="0.01"></div>
 	<div class="row"><label>Yaw response <span class="val" id="v-yawgain"></span></label>

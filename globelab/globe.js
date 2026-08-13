@@ -128,6 +128,23 @@
 		camMode: 'chase',
 		controlMode: 'sheets',
 		sheetRate: 45,
+		crossAt: 150,
+		// ---- keel ------------------------------------------------------------
+		// Without one she had no sideways motion at all: she travelled exactly
+		// along her heading, so the sails' side force went nowhere and there was
+		// nothing for a keel to resist. She could not hold a course either,
+		// because a hull that cannot slip cannot weathervane.
+		//
+		// `keelGrip` is how hard the keel refuses to go sideways. High and she
+		// slips almost none and points high; low and she crabs off to leeward.
+		// `keelX` is where its lateral area centres, in her lengths, aft of the
+		// pivot the sail moment is taken about. That lever is the whole of her
+		// directional stability: slip to one side and the keel, being aft, pulls
+		// her stern up into the slip and swings her bow round to follow her own
+		// wake.
+		keelGrip: 4.0,
+		keelX: -0.55,
+		keelGain: 34,
 		// Centre of lateral resistance, in her lengths from her origin. Positive
 		// is forward. Sail force forward of it bears her away, aft of it rounds
 		// her up.
@@ -294,7 +311,11 @@
 	var boat = {
 		pos: new Vec3(),
 		head: new Vec3(),
-		speed: 0.28,
+		speed: 0.28,             // forward, along her heading
+		vLat: 0,                 // sideways, along her perp axis
+		leeway: 0,               // same thing, for anything reading it
+		betaDeg: 0,              // the angle she is slipping at
+		yawRate: 0,
 		lam: 0, phi: 0,          // cached each step from pos
 		headEast: 1, headNorth: 0
 	};
@@ -316,14 +337,36 @@
 		boat.headEast = boat.head.dot(e);
 		boat.headNorth = boat.head.dot(n);
 	}
-	var _e = new Vec3(), _n = new Vec3(), _axis = new Vec3();
+	var _e = new Vec3(), _n = new Vec3(), _axis = new Vec3(), _track = new Vec3();
 
 	// The prevailing wind always relaxes toward due east in the LOCAL frame
 	// (see WIND_FRAG) so, exactly as smoke-lab used the fixed +x wind to pick
 	// a tack, this uses local east.
+	// Which side her sails are set on. This is LATCHED, and the latch is the
+	// point: the raw wind-side test flips whenever `headNorth` changes sign,
+	// which happens at head to wind AND at dead astern. The first is a tack and
+	// the sails really do cross; the second is not. Running square she was
+	// swapping the rig from side to side every time the bow wandered a degree
+	// across dead downwind, which is not a thing a boat does. She carries the
+	// sails where she has them until she comes through the wind.
+	var leeLatch = 1;
 	function leeSide() {
-		var across = -boat.headNorth;
-		return Math.abs(across) < 0.02 ? 1 : (across > 0 ? 1 : -1);
+		var want = -boat.headNorth > 0 ? 1 : -1;
+		// `crossAt` is a true wind angle, and the rig is only allowed to change
+		// sides below it. The wind is on neither side at both ends of the range -
+		// head to wind and dead astern - so the raw test dithers at both, and it
+		// was the second one that looked so wrong: a degree of wander across dead
+		// downwind and the whole rig snapped over and back.
+		//
+		// At 150 she has to come thirty degrees up from square before the rig
+		// crosses, which is decisive enough that nothing dithers, and both a tack
+		// and a real gybe still work. Wind it down to about 70 and she will only
+		// ever cross through the wind, which is tacks and no gybes at all - true
+		// to how she is steered here, since trim alone cannot force her through
+		// the wind (she stalls at 45 and falls away), but it does leave her
+		// sailing by the lee for a long time after bearing away round.
+		if (want !== leeLatch && twaDeg() < params.crossAt) leeLatch = want;
+		return leeLatch;
 	}
 	function twaDeg() {
 		return Math.abs(Math.atan2(boat.headNorth, -boat.headEast)) * 180 / PI;
@@ -345,23 +388,72 @@
 		// In trim-only there is no rudder to put over, so the arrows never touch
 		// her heading. Anything else and they are the helm.
 		var trimOnly = params.controlMode === 'trimonly';
+
+		// ---- the keel ---------------------------------------------------------
+		// Sign convention, established by measurement and then held to
+		// everywhere below. Her body frame is (forward, perp) where perp is her
+		// heading turned 90 degrees the same way east turns to north, so
+		// (forward, perp, up) is right-handed and a moment r.x*f.y - r.y*f.x is
+		// a rotation of the bow TOWARD perp. `rotateAbout(head, pos, +a)` turns
+		// her the other way (probed: heading north, +a moved her toward east
+		// while perp pointed west), so every rotation below is applied negated.
+		// Getting this wrong is what made the first keel drive her off course
+		// instead of holding her on it.
+		//
+		// Leeway. She slips sideways until the keel's lift matches the sails'
+		// side force. Keel lift is proportional to the angle she slips at, so
+		// `keelGrip` is read directly as "side-force coefficient per radian of
+		// leeway": at grip 4 a side force of 0.35 settles her at 0.09 radians,
+		// five degrees, which is about what a real boat gives away.
+		var qq = params.wind * params.wind;
+		var Vf = Math.max(0.002, Math.abs(boat.speed));
+		var beta = boat.vLat / Vf;
+		var keelSide = -params.keelGrip * beta;
+		boat.vLat += (force.sideFast + keelSide) * params.driveGain * qq * dt;
+		boat.leeway = boat.vLat;
+		boat.betaDeg = beta * 180 / PI;
+
+		// And the keel is aft of the pivot, which is the whole of her directional
+		// stability. Turn the bow and her track has not turned yet, so she is
+		// instantly slipping; the keel, being aft, makes its lift there and
+		// swings her stern out to follow her own wake.
+		//
+		// Only the TRANSIENT part of that counts. A boat is designed so that in
+		// steady sailing the sails' couple and the keel's cancel - that is what
+		// balance means - so feeding in the whole keel force gave her a standing
+		// bear-away moment of -3, twenty times anything the sails could say, and
+		// she simply rotated for ever. What is left when the steady part is
+		// removed is the unbalanced lateral force, which is exactly the transient
+		// a turn creates and nothing else.
+		var betaSteady = force.sideFast / Math.max(0.5, params.keelGrip);
+		var keelMoment = -(params.keelX - params.clr) * params.keelGrip * (beta - betaSteady);
+		boat.keelMoment = keelMoment;
+
+		// The helm. Trim-only has no rudder, so there the arrows never touch her
+		// heading; anything else and they are the tiller. Her velocity does not
+		// turn with the boat, so putting the helm over shows up in the water as
+		// lateral slip, same as any other yaw.
 		var turn = 0;
 		if (!trimOnly) {
 			if (keys.ArrowLeft) turn += 1;
 			if (keys.ArrowRight) turn -= 1;
-			if (turn) rotateAbout(boat.head, boat.pos, turn * 0.9 * dt);
+			if (turn) {
+				var ra = turn * 0.9 * dt;
+				rotateAbout(boat.head, boat.pos, ra);
+				boat.vLat += boat.speed * ra;
+			}
 		}
 
 		// Steering by trim alone. No rudder: her heading changes only because the
-		// two sails are out of balance about her centre of lateral resistance,
-		// and the moment that turns her is integrated off the same pressure
-		// field as her drive. Nothing here models steering.
+		// two sails are out of balance about her pivot, and the moment that turns
+		// her is integrated off the same pressure field as her drive. Nothing
+		// here models steering.
 		//
-		// Held at 45 degrees off the wind and measured over five seconds: the
-		// reference trim reads -0.002 and holds her within 3 degrees; loading
-		// the headsail reads +0.035 and bears her away 34; unloading it reads
-		// -0.024 and rounds her up 21; easing the main bears her away 32 and
-		// sheeting it hard rounds her up 29. Positive is bow away from the wind.
+		// Measured from the settled beat, half a second on each key and five
+		// seconds to answer: Q takes the main to -34 and bears her away 6
+		// degrees, A eases it to +11 and rounds her up 4, W pulls the jib to -57
+		// and rounds her up 4, S lets it out to -12 and bears her away 3. The two
+		// sails pull opposite ways, which is the whole control.
 		if (trimOnly) {
 			var rate2 = params.sheetRate * dt;
 			if (keys.KeyQ) params.mainAngle -= rate2;
@@ -371,11 +463,18 @@
 			params.mainAngle = clamp(params.mainAngle, -180, 180);
 			params.jibAngle = clamp(params.jibAngle, -180, 180);
 			if (params.autoTrim) { params.autoTrim = false; kit.refreshAll(); }
-			// The measured yaw moment turns her, resisted by hull damping so she
-			// settles on a heading rather than spinning up without limit.
-			boat.yawRate = (boat.yawRate || 0) +
-				(force.yaw * params.yawGain - (boat.yawRate || 0) * params.yawDamp) * dt;
-			rotateAbout(boat.head, boat.pos, boat.yawRate * dt);
+			// The sails' moment turns her, the keel restores, the hull damps.
+			// `yawRate` is in the perp sense, hence the negation on the rotation.
+			boat.yawRate += (force.yaw * params.yawGain
+				+ keelMoment * params.keelGain
+				- boat.yawRate * params.yawDamp) * dt;
+			var alpha = boat.yawRate * dt;
+			rotateAbout(boat.head, boat.pos, -alpha);
+			// Her velocity does not turn with her. In the body frame that shows
+			// up as the lateral component picking up whatever the bow swung
+			// through, and it is that term, not the moment, that lets the keel
+			// feel the turn at all.
+			boat.vLat -= boat.speed * alpha;
 		}
 
 		if (params.controlMode === 'sheets') {
@@ -423,9 +522,19 @@
 		// pos x head. This is the entire reason a Vec3-on-the-sphere model was
 		// worth porting — she can sail straight over a pole without a single
 		// special case, unlike a lat/long integrator.
-		var travel = boat.speed * dt * WORLD_SCALE;
+		// Great-circle motion along her TRACK, which is her heading plus whatever
+		// leeway the keel could not stop. Her heading is carried round with her
+		// so she keeps pointing where she pointed; the difference between the
+		// two is the crab you can see from astern.
+		var trackE = boat.speed * boat.headEast + boat.leeway * -boat.headNorth;
+		var trackN = boat.speed * boat.headNorth + boat.leeway * boat.headEast;
+		var travel = Math.sqrt(trackE * trackE + trackN * trackN) * dt * WORLD_SCALE;
+		if (boat.speed < 0) travel = -travel;
 		if (Math.abs(travel) > 1e-9) {
-			_axis.crossVectors(boat.pos, boat.head).normalize();
+			eastAt(_e, boat.lam); northAt(_n, boat.lam, boat.phi);
+			var inv = 1 / Math.sqrt(trackE * trackE + trackN * trackN);
+			_track.copy(_e).multiplyScalar(trackE * inv).addScaledVector(_n, trackN * inv);
+			_axis.crossVectors(boat.pos, _track).normalize();
 			rotateAbout(boat.pos, _axis, travel);
 			rotateAbout(boat.head, _axis, travel);
 		}
@@ -1985,9 +2094,9 @@
 		gl.useProgram(p.handle);
 		gl.uniform2f(p.uniforms.boatLonLat, boat.lam, boat.phi);
 		gl.uniform2f(p.uniforms.heading2D, boat.headEast, boat.headNorth);
-		gl.uniform2f(p.uniforms.hullVel,
-			params.showBoat ? (boat.speed * WORLD_SCALE) * boat.headEast * 300 : 0,
-			params.showBoat ? (boat.speed * WORLD_SCALE) * boat.headNorth * 300 : 0);
+		var hvE = (boat.speed * boat.headEast + boat.leeway * -boat.headNorth) * WORLD_SCALE * 300;
+		var hvN = (boat.speed * boat.headNorth + boat.leeway * boat.headEast) * WORLD_SCALE * 300;
+		gl.uniform2f(p.uniforms.hullVel, params.showBoat ? hvE : 0, params.showBoat ? hvN : 0);
 		gl.uniform1f(p.uniforms.size, params.showBoat ? params.boatSize : 0.0);
 		gl.uniform1f(p.uniforms.lee, leeSide());
 		setFoilUniforms(p);
@@ -2126,7 +2235,7 @@
 		}
 	}
 
-	var force = { drive: 0, side: 0, window: 2.5, acc: null, ready: false, fast: 0, yaw: 0, yawMean: 0 };
+	var force = { drive: 0, side: 0, window: 2.5, acc: null, ready: false, fast: 0, sideFast: 0, yaw: 0, yawMean: 0 };
 	LAB.force = force;
 	var forceRead = new Float32Array(4), forceByte = new Uint8Array(4);
 
@@ -2174,6 +2283,7 @@
 
 		var k = 1 - Math.exp(-dt / 0.4);
 		force.fast += (drive - force.fast) * k;
+		force.sideFast += (side - force.sideFast) * k;
 		// Same 0.4 s smoothing as the drive: quick enough to answer a trim
 		// change, slow enough not to chase the vortex shedding.
 		force.yaw += (mz - force.yaw) * k;
@@ -2335,7 +2445,7 @@
 	});
 
 	LAB.debug = function () {
-		return { gl: gl, ext: ext, boat: boat, dye: dye, velocity: velocity, canvas: canvas,
+		return { lee: leeSide(), twa: twaDeg(), gl: gl, ext: ext, boat: boat, dye: dye, velocity: velocity, canvas: canvas,
 			camEye: camEye, camTarget: camTarget, camRadius: camRadius,
 			particlePos: particlePos ? particlePos.read : null,
 			particleInitPos: particleInitPos || null,
@@ -2574,15 +2684,31 @@
 		kit.cycle('b-medium', 'medium', ['smoke', 'oil'], function (v) { return v; }, function () { clearAll(); });
 		kit.pick({ chase: 'b-cam-chase', lead: 'b-cam-lead', lazy: 'b-cam-lazy',
 			limb: 'b-cam-limb', free: 'b-cam-free' }, 'camMode', function () { camLazy.pos = null; });
+		slider('crossat', 'crossAt', function (v) { return Math.round(v) + '\u00b0'; });
+		slider('keelgrip', 'keelGrip', one);
+		slider('keelx', 'keelX', one);
+		slider('keelgain', 'keelGain', one);
 		slider('clr', 'clr', one);
 		slider('yawgain', 'yawGain', one);
 		kit.pick({ helm: 'b-ctl-helm', sheets: 'b-ctl-sheets', trimonly: 'b-ctl-trimonly' }, 'controlMode', function (m) {
 			if (m === 'sheets') params.autoTrim = false;
+			if (m === 'trimonly') {
+				// Put her on the beat. Found by sweeping the trim plane against
+				// wind angle and keeping the pairs whose moment crosses zero with
+				// a rising slope, which is what a self-steering trim is: bear away
+				// and the rig rounds you back up. This pair settles at 61 degrees
+				// off the wind making 1.37, the best upwind VMG of the six that
+				// were stable; -23/-8 holds a rock-steady 70 but slower, and
+				// -40/-15 has no stable heading at all and simply spins.
+				params.autoTrim = false;
+				params.jibAngle = -35;
+				params.mainAngle = -12;
+			}
 			paintAutoState();
 			kit.refreshAll();
 			var hint = document.getElementById('control-hint');
 			if (hint) hint.textContent = m === 'trimonly'
-				? 'No rudder at all. She turns only because the two sails are out of balance about her centre of lateral resistance. W loads the headsail and A eases the main, and either bears her away; S unloads the headsail and Q sheets the main hard, and either rounds her up. Balance the pair and she holds her heading.'
+				? 'No rudder at all: she turns only because the two sails are out of balance about her pivot, and the keel is what lets her hold a course once they agree. She starts on the beat and settles around 60 degrees off the wind. Q and S bear her away, A and W round her up \u2014 the two sails pull opposite ways, and the course you hold is the balance you strike between them. She will not come through the wind on trim alone; she stalls at about 45.'
 				: m === 'sheets'
 				? 'Q / A main sheet in and out, W / S jib sheet, arrows the rudder. Auto trim is off: she only goes if the two sails agree.'
 				: 'Arrows steer and drive her; auto trim looks after the sails.';
@@ -2878,6 +3004,15 @@
 				// reference trim reads -0.002 and holds her heading within 3.
 				if (yh) yh.textContent = Math.abs(force.yawMean) < 3e-3 ? 'balanced'
 					: (force.yawMean > 0 ? 'bearing away' : 'rounding up');
+				var lw = document.getElementById('r-leeway');
+				if (lw) {
+					var lwd = boat.betaDeg;
+					// Always to leeward, so the sign is noise. The size is not.
+					lw.textContent = Math.abs(lwd).toFixed(1) + '\u00b0';
+					// Anything past about 12 degrees and she is crabbing more than
+					// she is sailing: the keel is losing.
+					lw.className = 'val ' + (Math.abs(lwd) < 12 ? 'good' : 'bad');
+				}
 				var sp = document.getElementById('r-speed');
 				if (sp) {
 					sp.textContent = (boat.speed * 100).toFixed(2);
