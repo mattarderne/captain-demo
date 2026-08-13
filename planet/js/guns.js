@@ -251,9 +251,11 @@
 		if (!sol.can) return;
 
 		// Hold fire at the edge of the range unless she can rake, which is worth
-		// a long shot. Inside half range she fires as fast as she can load.
+		// a long shot at any distance. The more aggressive she is, the further
+		// out she is willing to open up.
 		var g = P.params.guns;
-		if (!sol.raking && sol.rangeLOA > g.rangeLOA * 0.75) return;
+		var hold = g.rangeLOA * (0.55 + 0.42 * P.params.sim.aggression);
+		if (!sol.raking && sol.rangeLOA > hold) return;
 		this.fire(boat, target, sol.side);
 	};
 })(window.PLANET);

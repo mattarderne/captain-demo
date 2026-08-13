@@ -44,73 +44,46 @@
 	// two in step if you tune either.
 	var BALL_FRAG = [
 		'precision highp float;',
-		'const int MAX_BLANKETS = ' + MAX_SHADOWS + ';',
-		'uniform float uTime, uSep, uWakeSpeed, uRecirc, uSwirl, uShedHz;',
-		'uniform float uNose, uLimb, uEddy, uEddyScale;',
-		'uniform float uPaint, uPanels, uRadius, uWindScale, uChop, uChopScale;',
-		'uniform vec3 uWindDir, uRefA, uRefB, uSun;',
-		'uniform int uShadowCount;',
-		'uniform vec3 uShadowPos[MAX_BLANKETS];',
-		'uniform vec3 uShadowDown[MAX_BLANKETS];',
-		'uniform vec4 uShadowParams[MAX_BLANKETS];',   // strength, length, sigma0, spread
+		P.GLSL.uniforms,
+		'uniform float uFlow, uFlowScale, uFlowStep, uFlowSpeed, uAmbient;',
+		'uniform float uPaint, uPanels, uWindScale, uChop, uChopScale;',
+		'uniform float uSmoke, uSmokeContrast;',
+		'uniform sampler2D uSmokeTex;',
+		'uniform vec3 uSun;',
 		'varying vec3 vN;',
 		'varying vec3 vWorld;',
 		CHOP,
+		P.GLSL.wind,
 
-		// Mirrors PLANET.Wind.eddyAt. Keep the two in step or the mottling on the
-		// water will disagree with the wind the boats are actually feeling.
-		'float leeNoise(vec3 n, float t, float phi) {',
-		'  float k = uEddyScale;',
-		'  float shed = sin(uShedHz * t * 6.2831853 + phi * 2.0);',
-		'  float fine = sin(n.x * k * 3.1 + t * 0.91) * sin(n.y * k * 2.3 - t * 0.69)',
-		'             * sin(n.z * k * 1.9 + t * 0.40);',
-		'  float coarse = sin(n.z * k * 1.4 + 2.0) * sin(n.x * k * 1.0 - t * 0.37)',
-		'               * sin(n.y * k * 0.86 + t * 0.22);',
-		'  return 0.55 * shed + 0.30 * fine + 0.25 * coarse;',
-		'}',
-
-		'float windSpeedAt(vec3 n) {',
-		'  float dn = dot(uWindDir, n);',
-		'  float theta = acos(clamp(-dn, -1.0, 1.0));',
-		'  float st = max(0.0, sin(theta));',
-		'  float potential = uNose + (uLimb - uNose) * st;',
-		'  float phi = atan(dot(n, uRefB), dot(n, uRefA));',
-		'  float wake = uWakeSpeed * (0.85 + 0.15 * st)',
-		'             * clamp(1.0 + uEddy * 0.5 * leeNoise(n, uTime, phi), 0.55, 1.5);',
-		'  float blend = smoothstep(uSep - 0.30, uSep + 0.55, theta);',
-		'  float spd = mix(potential, wake, blend);',
-		'  float def = 0.0;',
-		'  for (int i = 0; i < MAX_BLANKETS; i++) {',
-		'    if (i >= uShadowCount) break;',
-		'    vec4 pr = uShadowParams[i];',
-		'    if (pr.x <= 0.0) continue;',
-		'    vec3 sp = uShadowPos[i];',
-		'    float cosA = clamp(dot(n, sp), -1.0, 1.0);',
-		'    float arc = acos(cosA) * uRadius;',
-		'    if (arc > pr.y * 2.2) continue;',
-		'    vec3 e = n - sp * cosA;',
-		'    float el = length(e);',
-		'    float along = 0.0, across = 0.0;',
-		'    if (el > 1e-6) {',
-		'      e /= el;',
-		'      float cx = dot(e, uShadowDown[i]);',
-		'      along = arc * cx;',
-		'      across = arc * sqrt(max(0.0, 1.0 - cx * cx));',
-		'    }',
-		'    if (along < 0.0) continue;',
-		'    float sigma = pr.z + pr.w * along;',
-		'    float lat = across / sigma;',
-		'    float d = pr.x * exp(-along / pr.y) * exp(-0.5 * lat * lat);',
-		'    def = 1.0 - (1.0 - def) * (1.0 - d);',
+		// Line integral convolution. Walk the streamline through this pixel, a
+		// few steps each way, smearing a noise field along it. Noise smeared
+		// along a flow stops looking like noise and starts looking like the flow:
+		// filaments that stretch where the wind runs true and curl where it does
+		// not. The direction is re-evaluated at every step, so the filaments
+		// actually follow the curl of the lee rather than running straight.
+		'const int LIC = 7;',
+		'float flowTex(vec3 n) {',
+		'  float acc = 0.0, wsum = 0.0;',
+		'  float drift = uTime * uFlowSpeed;',
+		'  vec3 p = n;',
+		'  for (int i = 0; i < LIC; i++) {',
+		'    float w = 1.0 - float(i) / float(LIC);',
+		'    vec3 d = spinAbout(windDirAt(p), p, shadowBend(p));',
+		'    acc += vnoise((p - d * drift) * uFlowScale) * w;',
+		'    wsum += w;',
+		'    p = normalize(p * cos(uFlowStep) + d * sin(uFlowStep));',
 		'  }',
-		'  return spd * (1.0 - def);',
+		'  p = n;',
+		'  for (int i = 1; i < LIC; i++) {',
+		'    float w = 1.0 - float(i) / float(LIC);',
+		'    vec3 d = spinAbout(windDirAt(p), p, shadowBend(p));',
+		'    p = normalize(p * cos(uFlowStep) - d * sin(uFlowStep));',
+		'    acc += vnoise((p - d * drift) * uFlowScale) * w;',
+		'    wsum += w;',
+		'  }',
+		'  return acc / max(wsum, 1e-4);',
 		'}',
 
-		// The ramp has to span the field that actually exists. It used to divide
-		// by a flat 1.5, which was right when the nose of the ball was dead calm
-		// and the range ran 0 to 1.5. Now that nothing is below about 0.85 the
-		// whole ball came out at the pale end and the wind map read as one flat
-		// colour. Anchored to uLimb so it re-scales with the sliders.
 		'vec3 windRamp(float s) {',
 		'  float lo = 0.55;',
 		'  float t = clamp((s - lo) / max(0.2, uLimb - lo), 0.0, 1.0);',
@@ -124,9 +97,16 @@
 		'  vec3 n = normalize(vN);',
 		'  vec3 view = normalize(cameraPosition - vWorld);',
 		'  float spd = windSpeedAt(n);',
-		// Out near the limb a whole ocean of wave detail lands on a handful of
-		// pixels; let it go rather than watch it alias into blotches.
-		'  float facing = smoothstep(0.10, 0.55, dot(n, view));',
+
+		// Out at the very limb a whole ocean of detail lands on a handful of
+		// pixels, so it has to be let go before it aliases into blotches. But
+		// this ramp used to start at dot(n, view) = 0.10 and not finish until
+		// 0.55, and from the DECK the water you are looking at is nearly edge-on:
+		// that term sits near zero across the entire visible sea. It was killing
+		// the swell and the flow texture exactly where the player looks, leaving
+		// nothing but specular and fresnel, which is why the sea read as glass.
+		// The fade now bites only in the last few degrees before the silhouette.
+		'  float facing = 0.22 + 0.78 * smoothstep(0.012, 0.16, dot(n, view));',
 
 		// Swell: the water is only textured where the wind is actually working
 		// it, so a hole in the breeze reads as a glassy patch from a mile off.
@@ -163,11 +143,44 @@
 
 		'  vec3 col = mix(base, windRamp(spd), uPaint * 0.42);',
 
+		// The flow, smeared into the water. Two scales: long filaments carrying
+		// the shape of the field, and a finer set on top for texture close to.
+		// Both fade out towards the limb, where a whole ocean of them would land
+		// on a handful of pixels and alias into a mess.
+		'  if (uFlow > 0.001) {',
+		'    float f = flowTex(n);',
+		'    float fine = vnoise((n - windDirAt(n) * uTime * uFlowSpeed) * uFlowScale * 3.1);',
+		'    float streak = (f - 0.5) * 1.9 + (fine - 0.5) * 0.5;',
+		// Contrast into filaments rather than a haze, and let the hard breeze on
+		// the limb carry more of it than the smooth water in a lull.
+		'    streak = sign(streak) * pow(abs(streak), 0.72);',
+		'    float carry = uFlow * facing * (0.35 + 0.65 * rough);',
+		'    col += vec3(0.46, 0.66, 0.80) * streak * carry * 0.55;',
+		'    col *= 1.0 + streak * carry * 0.30;',
+		'  }',
+
+		// The smoke. This is the density field the simulation has been advecting,
+		// read back off the ball at the same equirectangular coordinates it was
+		// written at. Unlike the convolution above it has memory and it has
+		// sources: what you are looking at came off somebody's sails and has been
+		// carried here. Lit slightly from the sun side so the billows have form.
+		'  if (uSmoke > 0.001) {',
+		'    float dens = texture2D(uSmokeTex, dirToUv(n)).r;',
+		'    float k = 1.0 - exp(-dens * uSmokeContrast);',
+		'    float lit = 0.55 + 0.45 * clamp(dot(n, uSun) * 0.5 + 0.5, 0.0, 1.0);',
+		'    vec3 smokeCol = mix(vec3(0.32, 0.46, 0.62), vec3(0.93, 0.97, 1.0), k) * lit;',
+		'    col = mix(col, smokeCol, clamp(k * uSmoke, 0.0, 1.0));',
+		'  }',
+
 		// Whitecaps where it really blows.
 		'  float caps = smoothstep(1.34, 1.62, spd + swell * 0.8) * facing;',
 		'  col = mix(col, vec3(0.92, 0.97, 1.0), caps * 0.22);',
 
-		'  float diff = clamp(dot(n, uSun) * 0.5 + 0.58, 0.26, 1.2);',
+		// The night side used to bottom out at 0.26 and swallow everything on it:
+		// the flow texture, the wind paint and any boat over there all went to
+		// mud. `uAmbient` is the floor, and the sun's own contribution is gentler,
+		// so the far side reads as evening rather than as a hole in the picture.
+		'  float diff = clamp(dot(n, uSun) * 0.38 + 0.70, uAmbient, 1.2);',
 		'  vec3 h = normalize(uSun + view);',
 		'  float spec = pow(max(dot(n, h), 0.0), 60.0) * (0.35 + 0.65 * rough);',
 		'  float fres = pow(1.0 - max(dot(n, view), 0.0), 3.5);',
@@ -268,6 +281,10 @@
 
 		this.buildGunnery();
 		P.Streamers.init(this.scene);
+
+		// The simulation shares this material's wind uniforms by reference.
+		P.Smoke.init(this.renderer, this.ballUniforms);
+
 		this.bindOrbit();
 		return this;
 	};
@@ -285,6 +302,14 @@
 			this.scene.add(ball);
 			this.shotPool.push(ball);
 		}
+
+		// Where she went over the curve.
+		this.marker = new THREE.Mesh(
+			new THREE.SphereGeometry(1, 10, 8),
+			new THREE.MeshBasicMaterial({ color: 0xffb066, transparent: true, opacity: 0.5, depthWrite: false })
+		);
+		this.marker.visible = false;
+		this.scene.add(this.marker);
 
 		this.splashPool = [];
 		var ringGeo = new THREE.SphereGeometry(1, 10, 6);
@@ -323,38 +348,27 @@
 		var geo = new THREE.SphereGeometry(1, seg, Math.max(12, seg >> 1));
 
 		if (!this.ballUniforms) {
-			var pos = [], down = [], prm = [];
-			for (var i = 0; i < MAX_SHADOWS; i++) {
-				pos.push(new THREE.Vector3(0, 1, 0));
-				down.push(new THREE.Vector3(0, 0, 1));
-				prm.push(new THREE.Vector4(0, 1, 1, 0.17));
-			}
-			this.ballUniforms = {
-				uTime: { type: 'f', value: 0 },
-				uSep: { type: 'f', value: 1.9 },
-				uWakeSpeed: { type: 'f', value: 0.2 },
-				uRecirc: { type: 'f', value: 0.55 },
-				uSwirl: { type: 'f', value: 0.9 },
-				uShedHz: { type: 'f', value: 0.06 },
-				uNose: { type: 'f', value: 1.0 },
-				uLimb: { type: 'f', value: 1.55 },
-				uEddy: { type: 'f', value: 0.55 },
-				uEddyScale: { type: 'f', value: 4.5 },
-				uChop: { type: 'f', value: 0.85 },
+			// The wind half of these is built by windglsl.js and SHARED BY REFERENCE
+			// with the smoke simulation, so both shaders read one set of numbers and
+			// there is a single sync point (P.GLSL.sync) rather than two that drift.
+			this.ballUniforms = P.GLSL.makeUniforms();
+			var extra = {
+				uFlow: { type: 'f', value: 0.35 },
+				uFlowScale: { type: 'f', value: 26 },
+				uFlowStep: { type: 'f', value: 0.020 },
+				uFlowSpeed: { type: 'f', value: 0.035 },
+				uAmbient: { type: 'f', value: 0.52 },
+				uChop: { type: 'f', value: 0.55 },
 				uChopScale: { type: 'f', value: 1 },
 				uPaint: { type: 'f', value: 1 },
 				uPanels: { type: 'f', value: 1 },
-				uRadius: { type: 'f', value: 90 },
 				uWindScale: { type: 'f', value: 1 },
-				uWindDir: { type: 'v3', value: new THREE.Vector3(0, 0, -1) },
-				uRefA: { type: 'v3', value: new THREE.Vector3(1, 0, 0) },
-				uRefB: { type: 'v3', value: new THREE.Vector3(0, 1, 0) },
-				uSun: { type: 'v3', value: this.sun },
-				uShadowCount: { type: 'i', value: 2 },
-				uShadowPos: { type: 'v3v', value: pos },
-				uShadowDown: { type: 'v3v', value: down },
-				uShadowParams: { type: 'v4v', value: prm }
+				uSmoke: { type: 'f', value: 0.85 },
+				uSmokeContrast: { type: 'f', value: 1.5 },
+				uSmokeTex: { type: 't', value: null },
+				uSun: { type: 'v3', value: this.sun }
 			};
+			for (var k in extra) if (extra.hasOwnProperty(k)) this.ballUniforms[k] = extra[k];
 		}
 
 		var mat = this.ballMaterial || (this.ballMaterial = new THREE.ShaderMaterial({
@@ -509,6 +523,7 @@
 	var _x = new THREE.Vector3(), _y = new THREE.Vector3(), _z = new THREE.Vector3();
 	var _p = new THREE.Vector3(), _q = new THREE.Vector3(), _k = new THREE.Vector3();
 	var _eye = new THREE.Vector3(), _look = new THREE.Vector3(), _axis = new THREE.Vector3();
+	var _toward = new THREE.Vector3();
 
 	Render.update = function (dt) {
 		var R = P.params.world.radius;
@@ -522,6 +537,13 @@
 
 		this.updateBallUniforms(R);
 		this.updateWindSource(R);
+
+		// Advect the dye BEFORE the scene is drawn, so the ball reads this
+		// frame's field rather than last frame's. The simulation renders into its
+		// own targets, which resets the renderer's target, so this has to happen
+		// before anything is drawn to the screen.
+		P.Smoke.update(dt);
+		this.renderer.setRenderTarget ? this.renderer.setRenderTarget(null) : null;
 
 		for (var i = 0; i < P.World.boats.length; i++) {
 			this.placeBoat(P.World.boats[i], this.boats[i], R, L);
@@ -545,39 +567,26 @@
 	};
 
 	Render.updateBallUniforms = function (R) {
-		var u = this.ballUniforms, w = P.params.wind, q = P.params.quality;
-		u.uTime.value = P.World.time;
-		u.uSep.value = w.separationDeg * P.DEG;
-		u.uWakeSpeed.value = w.wakeSpeed;
-		u.uRecirc.value = w.recirc;
-		u.uSwirl.value = w.swirl;
-		u.uShedHz.value = w.shedHz;
-		u.uNose.value = w.noseFrac;
-		u.uLimb.value = w.limbFrac;
-		u.uEddy.value = w.eddy;
-		u.uEddyScale.value = w.eddyScale;
+		var u = this.ballUniforms, q = P.params.quality;
+
+		// The wind half is shared with the smoke simulation and synced in one
+		// place, so the field the dye is advected through and the field the water
+		// is painted with cannot disagree.
+		P.GLSL.sync(u);
+
+		var fl = P.params.flow, sm = P.params.smoke;
+		u.uFlow.value = fl.strength;
+		u.uFlowScale.value = fl.scale;
+		u.uFlowStep.value = fl.step;
+		u.uFlowSpeed.value = fl.speed;
+		u.uAmbient.value = P.params.view.ambient;
 		u.uChop.value = P.params.sea.chop;
 		u.uChopScale.value = P.params.sea.chopScale;
 		u.uPaint.value = q.paint ? 1 : 0;
 		u.uPanels.value = P.params.view.panels ? 1 : 0;
-		u.uRadius.value = R;
-		u.uWindDir.value.copy(P.Wind.dir);
-		u.uRefA.value.copy(P.Wind.refA);
-		u.uRefB.value.copy(P.Wind.refB);
-
-		var n = Math.min(q.paintShadows | 0, MAX_SHADOWS, P.World.shadows.length);
-		u.uShadowCount.value = n;
-		for (var i = 0; i < MAX_SHADOWS; i++) {
-			var prm = u.uShadowParams.value[i];
-			if (i < n) {
-				var s = P.World.shadows[i];
-				u.uShadowPos.value[i].copy(s.pos);
-				u.uShadowDown.value[i].copy(s.down);
-				prm.set(s.strength, s.length, s.sigma0, s.spread);
-			} else {
-				prm.set(0, 1, 1, 0.17);
-			}
-		}
+		u.uSmoke.value = (P.Smoke && P.Smoke.ready && sm.enabled) ? sm.opacity : 0;
+		u.uSmokeContrast.value = sm.contrast;
+		u.uSmokeTex.value = (P.Smoke && P.Smoke.ready) ? P.Smoke.texture() : null;
 	};
 
 	Render.updateWindSource = function (R) {
@@ -685,6 +694,26 @@
 			view.group.matrixWorldNeedsUpdate = true;
 		}
 		view.group.visible = under < 0.999;
+
+		// Even fully gone she leaves a mark on the water where she went over the
+		// curve: a small pennant on the horizon, on her true bearing, at the
+		// point the sea meets the sky. Losing sight of her is the game; losing
+		// track of her entirely is just confusing.
+		if (this.marker) {
+			var showing = under > 0.35;
+			this.marker.visible = showing;
+			if (showing) {
+				var eye = P.horizonAngle(L * 1.15);
+				P.tangentToward(_toward, P.World.player.pos, P.World.rival.pos);
+				_p.copy(P.World.player.pos);
+				_axis.crossVectors(_p, _toward).normalize();
+				P.rotateAbout(_p, _axis, eye * 0.94);       // just inside our horizon
+				this.marker.position.copy(_p).multiplyScalar(R + L * 0.5);
+				var s = L * 0.22;
+				this.marker.scale.set(s, s, s);
+				this.marker.material.opacity = 0.30 + 0.45 * P.clamp((under - 0.35) / 0.65, 0, 1);
+			}
+		}
 
 		// Her wake is a line lying on the water, so it cannot sink out of sight —
 		// fade it out over the same stretch instead.

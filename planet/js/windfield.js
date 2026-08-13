@@ -194,6 +194,18 @@
 				var side = _e.dot(s.lateral) < 0 ? -1 : 1;
 				bend += side * d * bendCfg * Math.min(1, lat);
 			}
+
+			// And her lee is DISTURBED air, not merely thin air. Sails shed a
+			// vortex street the same way the ball does, alternating side to side
+			// as it goes downstream and drifting aft with the wind. Sail through
+			// somebody's wake and the breeze wags on you, which is the thing you
+			// actually notice on the water long before the lull arrives.
+			var cfg = P.params.shadow;
+			if (cfg.eddy > 0.0001) {
+				var street = Math.sin(along / Math.max(0.4, s.sigma0 * cfg.eddyPitch) -
+					this.time * cfg.shedHz * P.TAU);
+				bend += street * d * cfg.eddy;
+			}
 		}
 
 		if (deficit > 0) out.multiplyScalar(1 - deficit);

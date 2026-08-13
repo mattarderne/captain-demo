@@ -209,12 +209,27 @@
 		b.speed *= 0.98;
 	};
 
+	var _rel = new THREE.Vector3();
+
 	World.updateShadow = function (boat) {
 		var s = boat.shadow;
 		s.pos = boat.pos;
-		if (boat.windSpeed > 0.01) {
-			s.down.copy(boat.wind).multiplyScalar(1 / boat.windSpeed);
-		}
+
+		// The shadow lies along the APPARENT wind, not the true wind.
+		//
+		// A parcel of her dirty air shed t seconds ago has been carried W*t by
+		// the wind while she has sailed V*t, so relative to her it sits at
+		// (W - V)*t: a straight line along the apparent wind. Laying the cone
+		// straight downwind of the true wind, as this used to, swings it far too
+		// far forward, which is why it looked like it was hanging off her lee bow
+		// instead of trailing astern. The faster she goes the further aft it
+		// sweeps, which is the behaviour you want and it comes out for free.
+		_rel.copy(boat.wind).addScaledVector(boat.head, -boat.speed);
+		_rel.addScaledVector(boat.pos, -_rel.dot(boat.pos));      // keep it tangential
+		var rl = _rel.length();
+		if (rl > 0.01) s.down.copy(_rel).multiplyScalar(1 / rl);
+		else if (boat.windSpeed > 0.01) s.down.copy(boat.wind).multiplyScalar(1 / boat.windSpeed);
+
 		s.lateral.crossVectors(boat.pos, s.down).normalize();
 		// A boat only blankets as hard as she's got sail working: a stalled boat
 		// lying in a lull is barely in anyone's way.
@@ -320,18 +335,27 @@
 
 		boat.aiTimer -= dt;
 		var forced = P.params.sim.aiMode;
+		var aggr = P.params.sim.aggression;
+
 		if (forced !== 'auto') {
 			boat.aiMode = forced;
 		} else if (boat.aiTimer <= 0) {
-			boat.aiTimer = 4 + Math.random() * 4;
-			if (boat.deficit > 0.25) boat.aiMode = 'escape';            // out of his bad air
-			else if (range < L * 16) {
-				boat.aiMode = Math.random() < 0.22 ? 'hide' : 'cover';   // sit on his wind, or vanish
-			} else {
-				boat.aiMode = 'chase';                                   // close the gap first
-			}
-			// Hiding is only worth anything if she commits to it for a while.
-			if (boat.aiMode === 'hide') boat.aiTimer = 10 + Math.random() * 8;
+			boat.aiTimer = 3 + Math.random() * 3;
+
+			// She used to disappear over the curve on nearly a quarter of her
+			// decisions, and commit to it for up to eighteen seconds. On a small
+			// ball that meant most of the game was spent looking at an empty sea
+			// wondering where she had got to. Hiding is now something she does
+			// when she is being beaten, not as an opening move.
+			var hurt = boat.hp !== undefined && boat.hp <= 4;
+			var hideChance = (1 - aggr) * 0.35 + (hurt ? 0.3 : 0);
+
+			if (boat.deficit > 0.25 + 0.25 * aggr) boat.aiMode = 'escape';
+			else if (range > L * (26 - 14 * aggr)) boat.aiMode = 'chase';
+			else if (Math.random() < hideChance) boat.aiMode = 'hide';
+			else boat.aiMode = 'cover';
+
+			if (boat.aiMode === 'hide') boat.aiTimer = 6 + Math.random() * 5;
 		}
 
 		switch (boat.aiMode) {
@@ -364,7 +388,12 @@
 				_target.copy(boat.pos).addScaledVector(boat.head, (L * 20) / R).normalize();
 				break;
 			default: // chase
-				_target.copy(player.pos);
+				// Lay her alongside rather than at his exact position, so she
+				// arrives on his beam with her guns bearing instead of trying to
+				// sail through him and being shouldered off.
+				_target.copy(player.pos)
+					.addScaledVector(player.shadow.lateral, (L * 2.5) / R)
+					.normalize();
 		}
 
 		this.steerToward(boat, _target, boat.aiMode !== 'hide');

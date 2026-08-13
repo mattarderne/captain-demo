@@ -49,10 +49,16 @@
 		// Each boat blankets the air downwind of it: a widening cone of dead air.
 		shadow: {
 			strength: 0.85,    // peak wind loss right behind the sails
-			lengthMul: 7.0,    // shadow reach, in boat lengths
+			lengthMul: 4.0,    // shadow reach, in boat lengths
 			sigmaMul: 0.62,    // shadow half-width at the transom, in boat lengths
 			spread: 0.17,      // how fast the cone widens with distance
-			bend: 0.55         // how much air bends around the edges of the shadow
+			bend: 0.55,        // how much air bends around the edges of the shadow
+
+			// Her sails shed a vortex street, same as the ball does. This is what
+			// you see wagging in her wake before the lull itself reaches you.
+			eddy: 0.42,        // strength of the wag, radians at the peak deficit
+			eddyPitch: 1.9,    // spacing of the vortices, in shadow half-widths
+			shedHz: 0.30       // how fast the street drifts aft
 		},
 
 		// Broadsides. Ranges in BOAT LENGTHS, not metres, so they keep meaning
@@ -69,6 +75,34 @@
 			maxDamagePerBroadside: 4, // no single broadside ends it
 			spreadLOA: 1.6,           // how wide the misses fall
 			flightPerLOA: 0.13        // seconds of flight per boat length of range
+		},
+
+		// A density field advected by the wind, in a texture wrapped round the
+		// ball. This is the thing that actually shows you the air moving: dye off
+		// the sails, carried, stretched and rolled up by the flow. See smoke.js.
+		smoke: {
+			enabled: true,
+			resolution: 1024,  // texture width; height is half. Rebuild on change.
+			substeps: 2,       // advection steps per frame; more = crisper filaments
+			speed: 1.0,        // multiplier on how fast the wind carries it
+			dissipate: 0.9975, // per 60th of a second. Lower fades sooner.
+			fromSails: 3.6,    // dye injected at each boat
+			plumeWidth: 0.55,  // injection radius, in boat lengths
+			ambientSeed: 0.95, // feed over the windward face
+			seedScale: 9,      // grain of that feed
+			opacity: 1.0,      // how strongly it shows on the water
+			contrast: 2.2
+		},
+
+		// The older line-integral-convolution texture, kept underneath the smoke
+		// as a fine grain on the water. It has no sources and no memory, so it
+		// cannot do what the smoke does, but it costs little and reads well close
+		// to. Set strength to 0 if the two fight each other.
+		flow: {
+			strength: 0.14,    // 0 turns it off entirely
+			scale: 26,         // detail; higher is finer
+			step: 0.020,       // radians of arc per convolution step (streak length)
+			speed: 0.035       // how fast the pattern drifts downwind
 		},
 
 		quality: {
@@ -88,12 +122,17 @@
 			panels: true,      // beach-ball panelling on the water
 			cones: false,      // draw each boat's dirty-air cone
 			minimap: true,
-			stars: 0.75        // starfield brightness, 0 for an empty sky
+			stars: 0.75,       // starfield brightness, 0 for an empty sky
+			ambient: 0.52      // how lit the night side of the ball stays
 		},
 
 		sim: {
 			autoTrim: true,
 			aiMode: 'auto',    // auto | cover | hide | chase | free
+			// Matches the flat-ocean game's battle.aggression. Scales how close
+			// she tries to sit, how readily she fires, and how rarely she runs
+			// for the far side of the ball. At 0 she is a tourist.
+			aggression: 0.92,
 			paused: false
 		}
 	};

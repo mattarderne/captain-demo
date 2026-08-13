@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>Smoke lab</title>
+<style>
+	:root { --ink:#e8f1fa; --dim:#90a6bd; --panel:rgba(9,16,26,0.86); --edge:rgba(140,190,235,0.22); --warm:#ffd9a0; }
+	html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#05070f; color:var(--ink);
+		font:12px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
+	canvas { display:block; position:fixed; inset:0; width:100%; height:100%; }
+	.panel { position:fixed; z-index:10; background:var(--panel); border:1px solid var(--edge); border-radius:6px; padding:10px 12px; }
+	#controls { top:14px; left:14px; width:250px; max-height:calc(100% - 28px); overflow-y:auto; }
+	#controls h1 { margin:0 0 4px; font-size:14px; color:var(--warm); }
+	#controls p.lede { margin:0 0 10px; color:var(--dim); font-size:11px; line-height:1.5; }
+	.row { margin:7px 0; }
+	.row label { display:flex; justify-content:space-between; color:var(--dim); margin-bottom:3px; }
+	.row label .val { color:var(--ink); }
+	.row.auto label { opacity:0.45; }
+	.row.auto label .val::after { content:' auto'; color:var(--warm); font-size:10px; }
+	.row.auto input[type=range] { opacity:0.4; }
+	.readout div { display:flex; justify-content:space-between; margin:3px 0; color:var(--dim); }
+	.readout .val { color:var(--ink); }
+	.readout .val.good { color:#8fe6b0; }
+	.readout .val.bad { color:#ff9a80; }
+	p.note { margin:4px 2px 8px; color:#7f93a8; font-size:10px; line-height:1.45; }
+	.row input[type=range] { width:100%; accent-color:#7fc6ff; }
+	button { background:rgba(30,48,68,0.7); border:1px solid var(--edge); color:var(--ink);
+		font:inherit; padding:4px 9px; border-radius:4px; cursor:pointer; }
+	button.on { background:#2f6ea3; border-color:#7fc6ff; color:#fff; }
+	.btns { display:flex; gap:5px; flex-wrap:wrap; margin-top:8px; }
+	.btns button { flex:1; }
+	details { margin:10px 0 0; }
+	details > summary {
+		list-style:none; cursor:pointer; user-select:none;
+		margin:0 0 4px; padding:5px 0 5px 16px; position:relative;
+		font-size:10px; letter-spacing:0.16em; text-transform:uppercase; color:#9fc4e6;
+		border-bottom:1px solid rgba(140,190,235,0.16);
+	}
+	details > summary::-webkit-details-marker { display:none; }
+	details > summary::before {
+		content:'\25B8'; position:absolute; left:2px; top:5px;
+		transition:transform 0.15s ease; color:#7fc6ff;
+	}
+	details[open] > summary::before { transform:rotate(90deg); }
+	details > summary:hover { color:#cfe6ff; }
+	.group { border-top:1px solid rgba(140,190,235,0.16); margin-top:12px; padding-top:4px; }
+	.head { font-size:10px; letter-spacing:0.16em; text-transform:uppercase; color:#9fc4e6;
+		margin:0 0 6px; }
+	#hint { right:14px; bottom:14px; color:var(--dim); text-align:right; font-size:11px; }
+	#hint b { color:var(--ink); }
+	#fatal { display:none; position:fixed; inset:25% 12% auto; z-index:100; padding:16px;
+		background:rgba(60,12,12,0.92); border:1px solid #d06a5a; border-radius:6px; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="controls" class="panel">
+	<h1>Smoke lab</h1>
+	<p class="lede">A fluid solver on a flat plane, and a rig standing in the stream. Jib and
+	main are two real airfoil sections, each set and shaped on its own, with a slot between
+	them. Only the sails are solid to the air.</p>
+
+	<div class="head">Measured on the flow</div>
+	<div class="readout">
+		<div><span>Drive</span><span class="val" id="r-drive">&mdash;</span></div>
+		<div><span>Side force</span><span class="val" id="r-side">&mdash;</span></div>
+		<div><span>Drive / side</span><span class="val" id="r-ratio">&mdash;</span></div>
+		<div><span>Her speed</span><span class="val" id="r-speed">&mdash;</span></div>
+	</div>
+	<p class="note" id="readout-note">Pressure integrated over the sail surfaces, averaged
+	over 2.5 s. Solver units, so compare them against each other rather than reading them as
+	newtons. Drive is along her heading.</p>
+	<p class="note" id="status-note"></p>
+
+	<div class="btns">
+		<button id="b-sail" class="on">sail on the force</button>
+		<button id="b-boat" class="on">sails solid</button>
+	</div>
+	<div class="btns">
+		<button id="b-auto" class="on">auto trim</button>
+		<button id="b-speed">colour by speed</button>
+	</div>
+	<div class="btns">
+		<button id="b-vel">velocity field</button>
+		<button id="b-medium">smoke</button>
+		<button id="b-clear">clear</button>
+	</div>
+	<div class="btns">
+		<button id="b-sweep-main">sweep main</button>
+		<button id="b-sweep-jib">sweep jib</button>
+	</div>
+	<div class="head">Controls</div>
+	<div class="btns">
+		<button id="b-ctl-helm">helm</button>
+		<button id="b-ctl-sheets">sheets &amp; rudder</button>
+	</div>
+
+	<div class="head">Presets</div>
+	<div id="preset-bar"></div>
+	<p class="note">Air and appearance only. Your rig, camera and control mode are left
+	exactly as you set them.</p>
+
+	<div class="btns">
+		<button id="b-copy">copy settings</button>
+		<button id="b-reset">reset</button>
+	</div>
+
+	<details id="sec-air">
+		<summary>The air</summary>
+		<div class="row"><label>Wind <span class="val" id="v-wind"></span></label>
+			<input type="range" id="s-wind" min="0" max="3" step="0.05"></div>
+		<div class="row"><label>Vorticity <span class="val" id="v-curl"></span></label>
+			<input type="range" id="s-curl" min="0" max="50" step="1"></div>
+		<div class="row"><label>Viscosity <span class="val" id="v-visc"></span></label>
+			<input type="range" id="s-visc" min="0" max="1" step="0.01"></div>
+		<div class="row"><label>Pressure iterations <span class="val" id="v-iter"></span></label>
+			<input type="range" id="s-iter" min="1" max="50" step="1"></div>
+	</details>
+
+	<details id="sec-smoke">
+		<summary>The smoke</summary>
+		<div class="row"><label>Streaks <span class="val" id="v-streaks"></span></label>
+			<input type="range" id="s-streaks" min="0" max="5" step="0.05"></div>
+		<div class="row"><label>How many <span class="val" id="v-count"></span></label>
+			<input type="range" id="s-count" min="4" max="70" step="1"></div>
+		<div class="row"><label>Streak width <span class="val" id="v-width"></span></label>
+			<input type="range" id="s-width" min="0.3" max="3" step="0.05"></div>
+		<div class="row"><label>Saturation <span class="val" id="v-sat"></span></label>
+			<input type="range" id="s-sat" min="0" max="2.5" step="0.05"></div>
+		<div class="row"><label>Contrast <span class="val" id="v-con"></span></label>
+			<input type="range" id="s-con" min="0.4" max="2.5" step="0.05"></div>
+		<div class="row"><label>Neon <span class="val" id="v-neon"></span></label>
+			<input type="range" id="s-neon" min="0" max="2" step="0.05"></div>
+		<div class="row"><label>Anti-diffusion <span class="val" id="v-mac"></span></label>
+			<input type="range" id="s-mac" min="0" max="1" step="0.05"></div>
+		<div class="row"><label>Wake mixing starts <span class="val" id="v-mixlo"></span></label>
+			<input type="range" id="s-mixlo" min="0" max="0.6" step="0.01"></div>
+		<div class="row"><label>Wake mixing ends <span class="val" id="v-mixhi"></span></label>
+			<input type="range" id="s-mixhi" min="0.00" max="1.2" step="0.01"></div>
+		<div class="row"><label>Fade <span class="val" id="v-fade"></span></label>
+			<input type="range" id="s-fade" min="0" max="2" step="0.01"></div>
+		<div class="row"><label>Speed scale <span class="val" id="v-speedscale"></span></label>
+			<input type="range" id="s-speedscale" min="0.1" max="2" step="0.02"></div>
+		<div class="row"><label>Speed contrast <span class="val" id="v-speedcontrast"></span></label>
+			<input type="range" id="s-speedcontrast" min="1" max="6" step="0.1"></div>
+		<div class="row"><label>Colour smoothing <span class="val" id="v-colourblur"></span></label>
+			<input type="range" id="s-colourblur" min="0" max="8" step="0.1"></div>
+		<p class="note">Indigo is dead air, teal is the free stream, yellow and white are the
+		fast stuff. Watch the colour lift as the flow squeezes through the slot.</p>
+	</details>
+
+	<details id="sec-particles">
+		<summary>Particles</summary>
+		<div class="btns">
+			<button id="b-particles">particles off</button>
+			<button id="b-particle-style">dust</button>
+		</div>
+		<div class="row"><label>Count <span class="val" id="v-pcount"></span></label>
+			<input type="range" id="s-pcount" min="0" max="3" step="1"></div>
+		<div class="row"><label>Drag <span class="val" id="v-pdrag"></span></label>
+			<input type="range" id="s-pdrag" min="0.2" max="20" step="0.1"></div>
+		<div class="row"><label>Point size <span class="val" id="v-psize"></span></label>
+			<input type="range" id="s-psize" min="1" max="4" step="0.5"></div>
+		<div class="row"><label>Trail length <span class="val" id="v-ptrail"></span></label>
+			<input type="range" id="s-ptrail" min="2" max="60" step="1"></div>
+		<div class="row"><label>Brightness <span class="val" id="v-pbright"></span></label>
+			<input type="range" id="s-pbright" min="0" max="3" step="0.05"></div>
+		<p class="note">Dust: one pixel per particle, lagging the flow by the drag time
+		constant, blown out additively where they bunch. Trails: each particle carries an
+		age, fades in and out over its life, and paints into a fading streak buffer. Both
+		respect the sails as solid and wrap at the domain edge.</p>
+	</details>
+
+	<details id="sec-rig">
+		<summary>The rig</summary>
+		<div class="row"><label>Size <span class="val" id="v-size"></span></label>
+			<input type="range" id="s-size" min="0.02" max="0.28" step="0.005"></div>
+		<div class="row"><label>Drive gain <span class="val" id="v-gain"></span></label>
+			<input type="range" id="s-gain" min="0" max="0.08" step="0.001"></div>
+		<div class="row"><label>Hull drag <span class="val" id="v-drag"></span></label>
+			<input type="range" id="s-drag" min="0.2" max="20" step="0.1"></div>
+		<p class="note">Below, <b>fore / aft</b> and <b>athwartships</b> are where each sail
+		is attached: the jib at the stemhead, the main at the mast, in her own lengths.
+		Each sail pivots about that point, so angle sheets the leech in and out while the
+		luff stays put. The slot follows from where the mast is and how hard each is
+		sheeted.</p>
+	</details>
+
+	<details id="sec-jib">
+		<summary>Jib</summary>
+		<div class="row"><label>Angle <span class="val" id="v-jang"></span></label>
+			<input type="range" id="s-jang" min="-180" max="180" step="1"></div>
+		<div class="row"><label>Tack, fore / aft <span class="val" id="v-jx"></span></label>
+			<input type="range" id="s-jx" min="-1.2" max="1.6" step="0.01"></div>
+		<div class="row"><label>Tack, athwartships <span class="val" id="v-jy"></span></label>
+			<input type="range" id="s-jy" min="-0.8" max="0.8" step="0.01"></div>
+		<div class="row"><label>Chord <span class="val" id="v-jchord"></span></label>
+			<input type="range" id="s-jchord" min="0.3" max="2.5" step="0.05"></div>
+		<div class="row"><label>Camber <span class="val" id="v-jcamber"></span></label>
+			<input type="range" id="s-jcamber" min="0" max="0.40" step="0.01"></div>
+		<div class="row"><label>Thickness <span class="val" id="v-jthick"></span></label>
+			<input type="range" id="s-jthick" min="0.02" max="0.40" step="0.01"></div>
+	</details>
+
+	<details id="sec-main">
+		<summary>Main</summary>
+		<div class="row"><label>Angle <span class="val" id="v-mang"></span></label>
+			<input type="range" id="s-mang" min="-180" max="180" step="1"></div>
+		<div class="row"><label>Mast, fore / aft <span class="val" id="v-mx"></span></label>
+			<input type="range" id="s-mx" min="-1.6" max="1.2" step="0.01"></div>
+		<div class="row"><label>Mast, athwartships <span class="val" id="v-my"></span></label>
+			<input type="range" id="s-my" min="-0.8" max="0.8" step="0.01"></div>
+		<div class="row"><label>Chord <span class="val" id="v-mchord"></span></label>
+			<input type="range" id="s-mchord" min="0.3" max="2.5" step="0.05"></div>
+		<div class="row"><label>Camber <span class="val" id="v-mcamber"></span></label>
+			<input type="range" id="s-mcamber" min="0" max="0.40" step="0.01"></div>
+		<div class="row"><label>Thickness <span class="val" id="v-mthick"></span></label>
+			<input type="range" id="s-mthick" min="0.02" max="0.40" step="0.01"></div>
+	</details>
+</div>
+
+<div id="hint" class="panel">
+	<div><b>Q/A</b> main sheet &nbsp; <b>W/S</b> jib sheet &nbsp; <b>&larr; &rarr;</b> helm &nbsp; <b>&uarr; &darr;</b> sail her &nbsp; <b>drag</b> park her &nbsp; <b>shift-drag</b> push the air</div>
+	<div><b>space</b> pause &nbsp; <b>H</b> hide this &nbsp; <span id="fps">— fps</span></div>
+</div>
+
+<div id="fatal"></div>
+
+<script src="../shared/labkit.js"></script>
+<script src="smoke.js"></script>
+<script>SMOKELAB.boot();</script>
+</body>
+</html>

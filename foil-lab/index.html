@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>Foil lab</title>
+<style>
+	:root { --ink:#e8f1fa; --dim:#90a6bd; --panel:rgba(9,16,26,0.86); --edge:rgba(140,190,235,0.22); --warm:#ffd9a0; }
+	html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#03060c; color:var(--ink);
+		font:12px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
+	canvas { display:block; position:fixed; inset:0; width:100%; height:100%; }
+	.panel { position:fixed; z-index:10; background:var(--panel); border:1px solid var(--edge); border-radius:6px; padding:10px 12px; }
+	#controls { top:14px; left:14px; width:260px; max-height:calc(100% - 28px); overflow-y:auto; }
+	#controls h1 { margin:0 0 4px; font-size:14px; color:var(--warm); }
+	#controls p.lede { margin:0 0 10px; color:var(--dim); font-size:11px; line-height:1.5; }
+	.row { margin:7px 0; }
+	.row label { display:flex; justify-content:space-between; color:var(--dim); margin-bottom:3px; }
+	.row label .val { color:var(--ink); }
+	.readout div { display:flex; justify-content:space-between; margin:3px 0; color:var(--dim); }
+	.readout .val { color:var(--ink); }
+	.readout .val.good { color:#8fe6b0; }
+	.readout .val.bad { color:#ff9a80; }
+	p.note { margin:4px 2px 8px; color:#7f93a8; font-size:10px; line-height:1.45; }
+	p.note.good { color:#8fe6b0; }
+	p.note.bad { color:#ff9a80; }
+	.row input[type=range] { width:100%; accent-color:#7fc6ff; }
+	button { background:rgba(30,48,68,0.7); border:1px solid var(--edge); color:var(--ink);
+		font:inherit; padding:4px 9px; border-radius:4px; cursor:pointer; }
+	button.on { background:#2f6ea3; border-color:#7fc6ff; color:#fff; }
+	.btns { display:flex; gap:5px; flex-wrap:wrap; margin-top:8px; }
+	.btns button { flex:1; }
+	details { margin:10px 0 0; }
+	details > summary {
+		list-style:none; cursor:pointer; user-select:none;
+		margin:0 0 4px; padding:5px 0 5px 16px; position:relative;
+		font-size:10px; letter-spacing:0.16em; text-transform:uppercase; color:#9fc4e6;
+		border-bottom:1px solid rgba(140,190,235,0.16);
+	}
+	details > summary::-webkit-details-marker { display:none; }
+	details > summary::before {
+		content:'\25B8'; position:absolute; left:2px; top:5px;
+		transition:transform 0.15s ease; color:#7fc6ff;
+	}
+	details[open] > summary::before { transform:rotate(90deg); }
+	details > summary:hover { color:#cfe6ff; }
+	.head { font-size:10px; letter-spacing:0.16em; text-transform:uppercase; color:#9fc4e6;
+		margin:0 0 6px; }
+	#hint { right:14px; bottom:14px; color:var(--dim); text-align:right; font-size:11px; }
+	#hint b { color:var(--ink); }
+	#fatal { display:none; position:fixed; inset:25% 12% auto; z-index:100; padding:16px;
+		background:rgba(60,12,12,0.92); border:1px solid #d06a5a; border-radius:6px; }
+	#sweep-panel { top:14px; right:14px; width:360px; max-height:calc(100% - 28px); overflow-y:auto; }
+	#sweep-panel h1 { margin:0 0 4px; font-size:14px; color:var(--warm); }
+	#sweep-table table, #offset-table table { width:100%; border-collapse:collapse; font-size:10px; margin-top:6px; }
+	#sweep-table th, #sweep-table td, #offset-table th, #offset-table td { text-align:right; padding:2px 4px; border-bottom:1px solid rgba(140,190,235,0.12); }
+	#sweep-table th:first-child, #sweep-table td:first-child, #offset-table th:first-child, #offset-table td:first-child { text-align:left; }
+	#sweep-table thead th, #offset-table thead th { color:#9fc4e6; font-weight:normal; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="controls" class="panel">
+	<h1>Foil lab</h1>
+	<p class="lede">A main wing and an inverted rear stabiliser, immersed below a flat free
+	surface. Water flows left to right. <b>Drag</b> the assembly anywhere; <b>shift-drag</b>
+	pushes the water instead. Two surface models, switchable below: a flat linear one (Dirichlet
+	p&nbsp;=&nbsp;0 at the top edge, which is what makes lift fall as she comes up shallow) and an
+	actual two-phase air/water interface that can deform.</p>
+
+	<div class="head">Measured on the flow</div>
+	<div class="readout">
+		<div><span>Main lift</span><span class="val" id="r-main">&mdash;</span></div>
+		<div><span>Stabiliser</span><span class="val" id="r-stab">&mdash;</span></div>
+		<div><span>Total lift</span><span class="val" id="r-total">&mdash;</span></div>
+		<div><span>Pitch moment</span><span class="val" id="r-moment">&mdash;</span></div>
+		<div><span>Depth</span><span class="val" id="r-depthchords">&mdash;</span></div>
+		<div><span>Cells, main / stab chord</span><span class="val" id="r-cells">&mdash;</span></div>
+	</div>
+	<p class="note">Pressure integrated over each foil's own surface, averaged over 2 s. Solver
+	units on a fixed-iteration Jacobi solve: comparable within a run, not across runs with
+	different settings, so read these as a shape not as newtons. Stabiliser reads negative when
+	it is doing its job.</p>
+	<p class="note" id="status-note"></p>
+
+	<div class="btns">
+		<button id="b-mode">linear (Dirichlet)</button>
+	</div>
+	<div class="btns">
+		<button id="b-speed" class="on">colour by speed</button>
+		<button id="b-vel">velocity field</button>
+	</div>
+	<div class="btns">
+		<button id="b-pause">pause</button>
+		<button id="b-clear">clear</button>
+		<button id="b-reset">reset</button>
+	</div>
+	<div class="btns">
+		<button id="b-sweep">run depth sweep &rarr;</button>
+	</div>
+	<div class="btns">
+		<button id="b-sweep-offset">run offset sweep &rarr;</button>
+	</div>
+
+	<details id="sec-flow">
+		<summary>The flow</summary>
+		<div class="row"><label>Speed <span class="val" id="v-flow"></span></label>
+			<input type="range" id="s-flow" min="40" max="500" step="5"></div>
+		<div class="row"><label>Vorticity <span class="val" id="v-curl"></span></label>
+			<input type="range" id="s-curl" min="0" max="40" step="1"></div>
+		<div class="row"><label>Viscosity <span class="val" id="v-visc"></span></label>
+			<input type="range" id="s-visc" min="0" max="1" step="0.01"></div>
+		<div class="row"><label>Pressure iterations <span class="val" id="v-iter"></span></label>
+			<input type="range" id="s-iter" min="10" max="60" step="1"></div>
+	</details>
+
+	<details id="sec-place">
+		<summary>Placement</summary>
+		<div class="row"><label>Group depth below surface <span class="val" id="v-depth"></span></label>
+			<input type="range" id="s-depth" min="0.012" max="0.38" step="0.003"></div>
+		<div class="row"><label>Gap, main to stabiliser <span class="val" id="v-gap"></span></label>
+			<input type="range" id="s-gap" min="0.09" max="0.45" step="0.003"></div>
+		<div class="row"><label>Main depth offset <span class="val" id="v-moff"></span></label>
+			<input type="range" id="s-moff" min="-0.10" max="0.10" step="0.003"></div>
+		<div class="row"><label>Stab depth offset <span class="val" id="v-soff"></span></label>
+			<input type="range" id="s-soff" min="-0.10" max="0.10" step="0.003"></div>
+		<p class="note">Depth is the GROUP's own reference point, straight down from the free
+		surface. Each foil's own offset then moves it independently up or down from that shared
+		depth &mdash; zero both sides is the original rigidly-paired behaviour. Drag the assembly
+		on the canvas to set group depth and position at once; the offsets and gap travel with
+		it unchanged.</p>
+	</details>
+
+	<details id="sec-foil">
+		<summary>Main foil</summary>
+		<div class="row"><label>Incidence <span class="val" id="v-mang"></span></label>
+			<input type="range" id="s-mang" min="-20" max="20" step="0.5"></div>
+		<div class="row"><label>Chord <span class="val" id="v-mchord"></span></label>
+			<input type="range" id="s-mchord" min="0.06" max="0.35" step="0.003"></div>
+		<div class="row"><label>Camber <span class="val" id="v-mcamber"></span></label>
+			<input type="range" id="s-mcamber" min="0" max="0.15" step="0.005"></div>
+		<div class="row"><label>Thickness <span class="val" id="v-mthick"></span></label>
+			<input type="range" id="s-mthick" min="0.03" max="0.25" step="0.005"></div>
+	</details>
+
+	<details id="sec-stab">
+		<summary>Stabiliser (inverted)</summary>
+		<div class="row"><label>Incidence <span class="val" id="v-sang"></span></label>
+			<input type="range" id="s-sang" min="-20" max="20" step="0.5"></div>
+		<div class="row"><label>Chord <span class="val" id="v-schord"></span></label>
+			<input type="range" id="s-schord" min="0.03" max="0.22" step="0.003"></div>
+		<div class="row"><label>Camber <span class="val" id="v-scamber"></span></label>
+			<input type="range" id="s-scamber" min="-0.15" max="0" step="0.005"></div>
+		<div class="row"><label>Thickness <span class="val" id="v-sthick"></span></label>
+			<input type="range" id="s-sthick" min="0.03" max="0.20" step="0.005"></div>
+		<p class="note">Negative camber and negative incidence together: the mean line bows the
+		other way and the nose points down, so this section makes downforce rather than lift.</p>
+	</details>
+
+	<details id="sec-twophase">
+		<summary>Two-phase mode</summary>
+		<div class="row"><label>Water : air density <span class="val" id="v-rho"></span></label>
+			<input type="range" id="s-rho" min="5" max="150" step="1"></div>
+		<div class="row"><label>Gravity <span class="val" id="v-gravity"></span></label>
+			<input type="range" id="s-gravity" min="0" max="120" step="1"></div>
+		<div class="row"><label>Initial water fraction <span class="val" id="v-surfacefrac"></span></label>
+			<input type="range" id="s-surfacefrac" min="0.35" max="0.85" step="0.01"></div>
+		<div class="row"><label>Interface sharpening <span class="val" id="v-sharpen"></span></label>
+			<input type="range" id="s-sharpen" min="0" max="8" step="0.1"></div>
+		<p class="note bad"><b>Not stable under sustained flow.</b> With the horizontal flow
+		running, the water fraction measurably drains toward zero over roughly 8&ndash;15 seconds
+		regardless of gravity &mdash; more iterations and a softer density ratio slow this but do
+		not stop it. The interface deforms convincingly for the first few seconds after a reset,
+		long enough to see the mechanism, then the drain takes over. Do not read a ventilation
+		depth out of a long session here; the linear mode's depth sweep is unaffected by any of
+		this and remains the trustworthy one.</p>
+		<p class="note">Real water:air is about 1000:1 &mdash; too stiff for a fixed-iteration
+		Jacobi solve at this grid to hold together, so this ratio is softened, same as graphics
+		fluid codes routinely do. No surface tension either, so no correctly-scaled droplets or
+		spray. Switch modes with the button above the readouts &mdash; the sim resets when you do,
+		since the two modes drive the domain edges differently.</p>
+	</details>
+
+	<details id="sec-dye">
+		<summary>Dye</summary>
+		<div class="row"><label>Streaks <span class="val" id="v-streaks"></span></label>
+			<input type="range" id="s-streaks" min="0" max="5" step="0.05"></div>
+		<div class="row"><label>How many <span class="val" id="v-count"></span></label>
+			<input type="range" id="s-count" min="4" max="60" step="1"></div>
+		<div class="row"><label>Streak width <span class="val" id="v-width"></span></label>
+			<input type="range" id="s-width" min="0.3" max="3" step="0.05"></div>
+		<div class="row"><label>Fade <span class="val" id="v-fade"></span></label>
+			<input type="range" id="s-fade" min="0" max="2" step="0.01"></div>
+		<div class="row"><label>Anti-diffusion <span class="val" id="v-mac"></span></label>
+			<input type="range" id="s-mac" min="0" max="1" step="0.05"></div>
+		<div class="row"><label>Speed scale <span class="val" id="v-speedscale"></span></label>
+			<input type="range" id="s-speedscale" min="0.1" max="2" step="0.02"></div>
+		<div class="row"><label>Speed contrast <span class="val" id="v-speedcontrast"></span></label>
+			<input type="range" id="s-speedcontrast" min="1" max="6" step="0.1"></div>
+		<div class="row"><label>Colour smoothing <span class="val" id="v-colourblur"></span></label>
+			<input type="range" id="s-colourblur" min="0" max="8" step="0.1"></div>
+	</details>
+
+	<p class="note">Linearised free surface only: no wave deformation, no ventilation, no
+	cavitation. This shows the trend and the mechanism, not the breakdown right at the surface.</p>
+</div>
+
+<div id="sweep-panel" class="panel">
+	<h1>Depth sweep</h1>
+	<p class="lede">Steps the assembly from deep to just under the surface, holds each depth long
+	enough to settle and average, and records lift. This curve is the actual answer to "what
+	happens at different depths" &mdash; not a single reading.</p>
+	<div id="sweep-table"><p class="note">No sweep run yet.</p></div>
+
+	<h1 style="margin-top:16px">Offset sweep</h1>
+	<p class="lede">Group depth held fixed; the relative depth between the two foils swept
+	instead. Negative: stabiliser shallower than the main foil. Positive: deeper. The case a
+	rigidly-paired assembly can never show &mdash; the two feel different amounts of surface
+	effect only once they are not at the same depth.</p>
+	<div id="offset-table"><p class="note">No sweep run yet.</p></div>
+</div>
+
+<div id="hint" class="panel">
+	<div><b>drag</b> move the assembly &nbsp; <b>shift-drag</b> push the water</div>
+	<div><b>space</b> pause &nbsp; <b>H</b> hide panels &nbsp; <span id="fps">&mdash; fps</span></div>
+</div>
+
+<div id="fatal"></div>
+
+<script src="../shared/labkit.js"></script>
+<script src="foil.js"></script>
+<script>FOILLAB.boot();</script>
+</body>
+</html>
