@@ -70,11 +70,17 @@ field. Three sources orbit and stir it. Drag to add your own.
 
 A hydrofoil in a tank of moving water. The main wing sits forward and an inverted stabiliser aft,
 each at its own depth, and you can drag the pair anywhere. The water surface is held at zero
-pressure, so lift falls away as the foil comes up shallow, as it does on a real foil. The depth and
-offset sweeps record the lift curve. A second mode tries a full two-phase water and air surface. It
-deforms convincingly for a few seconds and then drains, and the panel says so.
+pressure, so lift falls away as the foil comes up shallow, as it does on a real foil at speed. The
+depth and offset sweeps record the lift curve. A second mode tries a full two-phase water and air
+surface. It deforms convincingly for a few seconds and then drains, and the panel says so.
 
-![The main foil and stabiliser under the free surface](screenshots/foil-lab.png)
+**Free flight** puts a wingfoil in the tank: an 85 cm front wing at aspect ratio 9, a stabiliser
+and a mast. The solver measures the rig's lift and pitching moment over a grid of depths and pitch
+angles, and the board then flies in real time on those numbers while the rider holds its attitude.
+She rises until the surface takes away enough lift to match her weight, and the drag falls as the
+mast comes out of the water. Go too fast and the front wing breaches and ventilates.
+
+![A wingfoil in free flight, riding with its front wing just under the surface](screenshots/foil-lab.png)
 
 ## Voice-controlled sailing
 
