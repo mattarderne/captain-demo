@@ -47,6 +47,7 @@
 	// spans 0.15 of the height (about 114 cells at the default resolution).
 	var CHORD_UV = 0.15;
 	var H = craft.mainChord / CHORD_UV;
+	var RIG_X = 0.45;
 
 	var opts = {
 		speedKn: 14, massKg: 90, stanceCm: 20, mastCm: 85,
@@ -89,10 +90,13 @@
 		savedParams = null;
 	}
 	function placeRig(depth, pitch, vent) {
-		var c = LAB.canvas(), aspect = c.width / c.height;
+		var aspect = LAB.simAspect();
 		LAB.setRig({
 			metresPerHeight: H,
-			pivotX: (0.12 + craft.mainAhead) / (H * aspect),
+			// The front wing's leading edge RIG_X metres downstream of the
+			// inflow, with the wake running on across the rest of the screen.
+			pivotX: (RIG_X + craft.mainAhead) / (H * aspect),
+			mastLength: opts.mastCm / 100,
 			mainAhead: craft.mainAhead, stabAft: craft.stabAft,
 			// The domain shows about 0.6 m of water; deeper than that the rig
 			// is drawn at the bottom and the depth is read off the panel.
@@ -117,14 +121,14 @@
 	// a real section at this Reynolds number about 0.5). So calibration runs
 	// at the coarser grid and 80 iterations, about 2.6x faster, and holds
 	// each point long enough to average several shedding cycles.
-	var SETTLE = 4, HOLD = 5, FIRST_SETTLE = 7, ITERATIONS = 80, CAL_RES = 520;
+	var SETTLE = 4, HOLD = 5, FIRST_SETTLE = 7, ITERATIONS = 80, CAL_RES = 540;
 	// A point where either foil is within this fraction of its chord of the
 	// surface is not run: the foil is about to breach, and the flight model
 	// treats that region with its ventilation model instead.
 	var MIN_CLEAR = 0.15;
 
 	function signature() {
-		return JSON.stringify({ v: 3, craft: craft, chordUV: CHORD_UV, it: ITERATIONS, flow: 230,
+		return JSON.stringify({ v: 4, rigX: RIG_X, craft: craft, chordUV: CHORD_UV, it: ITERATIONS, flow: 230,
 			simRes: CAL_RES, depths: DEPTHS_C, pitches: PITCHES, settle: SETTLE, hold: HOLD });
 	}
 
