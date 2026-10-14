@@ -1,1 +1,99 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Captain</title><meta http-equiv="refresh" content="0; url=fft-ocean/index.html"></head><body><a href="fft-ocean/index.html">Enter</a></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Captain</title>
+<style>
+	html, body {
+		margin: 0; min-height: 100%;
+		background: radial-gradient(circle at 50% 20%, #10233a 0%, #05070f 70%);
+		color: #e8f1fa;
+		font: 14px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+	}
+	main { max-width: 640px; margin: 0 auto; padding: 12vh 24px 40px; }
+	h1 { font-size: 13px; letter-spacing: 0.28em; text-transform: uppercase; color: #ffd9a0; margin: 0 0 28px; }
+	a.card {
+		display: block; text-decoration: none; color: inherit; margin-bottom: 14px;
+		padding: 16px 18px; border: 1px solid rgba(140, 190, 235, 0.22); border-radius: 8px;
+		background: rgba(9, 16, 26, 0.6); transition: border-color 0.2s, transform 0.2s;
+	}
+	a.card:hover { border-color: rgba(180, 220, 255, 0.6); transform: translateY(-2px); }
+	a.card b { display: block; font-size: 16px; margin-bottom: 4px; }
+	a.card span { color: #90a6bd; }
+	a.card em { color: #7fc6ff; font-style: normal; }
+	footer { margin-top: 32px; color: #64798f; font-size: 11px; }
+	footer a { color: #90a6bd; }
+</style>
+</head>
+<body>
+<main>
+	<h1>Captain</h1>
+
+	<a class="card" href="planet/index.html">
+		<b>The wind over the ball <em>&mdash; new</em></b>
+		<span>A stylised water-ball with a savage horizon. The wind blows from a point in
+		space and flows over the sphere: light on the nose, hardest on the limb, a
+		sheltered lee full of back-eddies behind. Each boat blankets the air downwind of
+		her, so you can sail over your rival and kill her wind, or drop over the curve
+		and vanish where she cannot follow you. Shrink the ball until she is gone three
+		lengths away.</span>
+	</a>
+
+	<a class="card" href="smoke-lab/index.html">
+		<b>Smoke lab <em>&mdash; workbench</em></b>
+		<span>A fluid solver on a flat plane, with a boat sitting in it. Wind blows left to
+		right, she blocks it, and the wake sheds off her in a vortex street. Drag to push
+		the air about. Built flat and on its own so the air can actually be seen while it
+		is being tuned.</span>
+	</a>
+
+	<a class="card" href="globelab/index.html">
+		<b>Globe lab <em>&mdash; workbench</em></b>
+		<span>The smoke lab's solver wrapped onto a sphere: the same equirectangular grid an
+		atlas uses, with the metric terms a curved surface adds carried through the
+		divergence, the pressure solve and the gradient by hand. She sails a great circle
+		round it, into a wind that never runs out of room to blow.</span>
+	</a>
+
+	<a class="card" href="star-lab/index.html">
+		<b>Star lab <em>&mdash; workbench</em></b>
+		<span>A reimplementation of JoTrdl's Star Fluid Experiment: 262,144 particles riding a
+		single-pass compressible fluid solver, drawn additively as gold points over a cool
+		dye field. Three lobes orbit and feed it on their own; drag to add your own.</span>
+	</a>
+
+	<a class="card" href="vortex-lab/index.html">
+		<b>Vortex lab <em>&mdash; workbench</em></b>
+		<span>A circular obstacle in a uniform stream, reproducing amandaghassaei's VortexShedding
+		demo: past a threshold speed the wake stops sitting still and starts peeling off one
+		eddy to each side in turn, the von K&aacute;rm&aacute;n street a bridge deck or a
+		smokestack sheds in real wind. Drag to push the air, or turn the dials and watch the
+		shedding frequency and Strouhal number update live.</span>
+	</a>
+
+	<a class="card" href="foil-lab/index.html">
+		<b>Foil lab <em>&mdash; workbench</em></b>
+		<span>A hydrofoil near the surface: a main wing forward, an inverted stabiliser aft,
+		both draggable and independently adjustable in depth. The top of the tank is the free
+		surface, held at zero pressure rather than treated as a wall, which is what makes lift
+		actually fall as she comes up shallow instead of rising the way a rigid lid would. Run
+		the depth sweep for the measured curve. A second, switchable mode tries an honest
+		two-phase water/air interface with gravity and variable density &mdash; it deforms
+		convincingly for a few seconds and then drains; that limitation is stated plainly on
+		the panel rather than hidden.</span>
+	</a>
+
+	<a class="card" href="fft-ocean/index.html">
+		<b>The flat ocean</b>
+		<span>The original: a Napoleonic-era ship on an FFT sea, commanded entirely by
+		voice. Needs your own OpenAI key.</span>
+	</a>
+
+	<footer>
+		Ocean rendering from <a href="https://github.com/jbouny/fft-ocean">fft-ocean</a> (MIT).
+		Sail data from <a href="https://github.com/leeboardtools/bythelee">By The Lee</a> (Apache-2.0).
+	</footer>
+</main>
+</body>
+</html>

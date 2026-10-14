@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>Star lab</title>
+<style>
+	:root { --ink:#e8f1fa; --dim:#90a6bd; --panel:rgba(9,16,26,0.86); --edge:rgba(140,190,235,0.22); --warm:#ffd9a0; }
+	html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#000; color:var(--ink);
+		font:12px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
+	canvas { display:block; position:fixed; inset:0; width:100%; height:100%; cursor:pointer; }
+	.panel { position:fixed; z-index:10; background:var(--panel); border:1px solid var(--edge); border-radius:6px; padding:10px 12px; }
+	#controls { top:14px; left:14px; width:250px; max-height:calc(100% - 28px); overflow-y:auto; }
+	#controls h1 { margin:0 0 4px; font-size:14px; color:var(--warm); }
+	#controls p.lede { margin:0 0 10px; color:var(--dim); font-size:11px; line-height:1.5; }
+	.row { margin:7px 0; }
+	.row label { display:flex; justify-content:space-between; color:var(--dim); margin-bottom:3px; }
+	.row label .val { color:var(--ink); }
+	p.note { margin:4px 2px 8px; color:#7f93a8; font-size:10px; line-height:1.45; }
+	.row input[type=range] { width:100%; accent-color:#7fc6ff; }
+	button { background:rgba(30,48,68,0.7); border:1px solid var(--edge); color:var(--ink);
+		font:inherit; padding:4px 9px; border-radius:4px; cursor:pointer; }
+	button.on { background:#2f6ea3; border-color:#7fc6ff; color:#fff; }
+	.btns { display:flex; gap:5px; flex-wrap:wrap; margin-top:8px; }
+	.btns button { flex:1; }
+	select { background:rgba(30,48,68,0.7); border:1px solid var(--edge); color:var(--ink); font:inherit;
+		padding:4px 6px; border-radius:4px; width:100%; }
+	details { margin:10px 0 0; }
+	details > summary {
+		list-style:none; cursor:pointer; user-select:none;
+		margin:0 0 4px; padding:5px 0 5px 16px; position:relative;
+		font-size:10px; letter-spacing:0.16em; text-transform:uppercase; color:#9fc4e6;
+		border-bottom:1px solid rgba(140,190,235,0.16);
+	}
+	details > summary::-webkit-details-marker { display:none; }
+	details > summary::before {
+		content:'\25B8'; position:absolute; left:2px; top:5px;
+		transition:transform 0.15s ease; color:#7fc6ff;
+	}
+	details[open] > summary::before { transform:rotate(90deg); }
+	details > summary:hover { color:#cfe6ff; }
+	.head { font-size:10px; letter-spacing:0.16em; text-transform:uppercase; color:#9fc4e6;
+		margin:0 0 6px; }
+	#hint { right:14px; bottom:14px; color:var(--dim); text-align:right; font-size:11px; }
+	#hint b { color:var(--ink); }
+	#fatal { display:none; position:fixed; inset:25% 12% auto; z-index:100; padding:16px;
+		background:rgba(60,12,12,0.92); border:1px solid #d06a5a; border-radius:6px; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="controls" class="panel">
+	<h1>Star lab</h1>
+	<p class="lede">A reimplementation of JoTrdl's <em>Star Fluid Experiment</em>: 262,144
+	particles riding a single-pass compressible fluid solver, drawn additively as gold points
+	over a cool dye field. Three lobes orbit and feed it on their own; drag to add your own.</p>
+
+	<div class="btns">
+		<button id="b-autoplay" class="on">autoplay</button>
+		<button id="b-pause">pause</button>
+	</div>
+	<div class="btns">
+		<button id="b-dye" class="on">dye</button>
+		<button id="b-particles" class="on">particles</button>
+		<button id="b-clear">clear</button>
+	</div>
+
+	<div class="head">Presets</div>
+	<div id="preset-bar"></div>
+	<p class="note">Air, particles and colour only. The orbit driver is left as you set it.</p>
+
+	<div class="btns">
+		<button id="b-copy">copy settings</button>
+		<button id="b-reset">reset</button>
+	</div>
+
+	<details id="sec-air">
+		<summary>The fluid</summary>
+		<div class="row"><label>Timestep <span class="val" id="v-dt"></span></label>
+			<input type="range" id="s-dt" min="0.05" max="0.6" step="0.01"></div>
+		<div class="row"><label>Viscosity <span class="val" id="v-visc"></span></label>
+			<input type="range" id="s-visc" min="0" max="0.3" step="0.005"></div>
+		<div class="row"><label>Stiffness <span class="val" id="v-stiff"></span></label>
+			<input type="range" id="s-stiff" min="0" max="0.5" step="0.005"></div>
+		<div class="row"><label>Momentum damping <span class="val" id="v-damp"></span></label>
+			<input type="range" id="s-damp" min="0.90" max="1.0" step="0.001"></div>
+		<div class="row"><label>Shock smoothing <span class="val" id="v-zsmooth"></span></label>
+			<input type="range" id="s-zsmooth" min="0" max="0.4" step="0.01"></div>
+		<div class="row"><label>Dye advection <span class="val" id="v-dyeacc"></span></label>
+			<input type="range" id="s-dyeacc" min="0.5" max="4" step="0.1"></div>
+		<div class="row"><label>Dye diffusion <span class="val" id="v-dyediff"></span></label>
+			<input type="range" id="s-dyediff" min="0.95" max="0.999" step="0.001"></div>
+		<div class="row"><label>Impulse radius <span class="val" id="v-velrad"></span></label>
+			<input type="range" id="s-velrad" min="100" max="1200" step="10"></div>
+		<div class="row"><label>Dye radius <span class="val" id="v-dyerad"></span></label>
+			<input type="range" id="s-dyerad" min="300" max="4000" step="50"></div>
+		<div class="row"><label>Impulse gain <span class="val" id="v-gain"></span></label>
+			<input type="range" id="s-gain" min="10" max="300" step="5"></div>
+		<p class="note">Stiffness stands in for pressure: no iterative solve, one algebraic
+		term pushing velocity away from wherever the density-like channel has piled up.</p>
+	</details>
+
+	<details id="sec-particles">
+		<summary>Particles</summary>
+		<div class="row"><label>Lifetime <span class="val" id="v-page"></span></label>
+			<input type="range" id="s-page" min="1" max="15" step="0.5"></div>
+		<div class="row"><label>Spawn radius <span class="val" id="v-prad"></span></label>
+			<input type="range" id="s-prad" min="0.002" max="0.08" step="0.001"></div>
+		<div class="row"><label>Point size <span class="val" id="v-psize"></span></label>
+			<input type="range" id="s-psize" min="0.1" max="3" step="0.05"></div>
+		<div class="row"><label>Ageing rate <span class="val" id="v-pdecay"></span></label>
+			<input type="range" id="s-pdecay" min="0.002" max="0.05" step="0.001"></div>
+		<div class="row"><label>Density <span class="val" id="v-pdensity"></span></label>
+			<input type="range" id="s-pdensity" min="0" max="1" step="0.05"></div>
+		<div class="row"><label>Drift gain <span class="val" id="v-drift"></span></label>
+			<input type="range" id="s-drift" min="0.2" max="6" step="0.1"></div>
+		<p class="note">262,144 particles, one texel each in a 512x512 position/age texture.
+		Refilled through a ring buffer, one full row per emission, using the same mechanism
+		the source uses.</p>
+	</details>
+
+	<details id="sec-orbit">
+		<summary>Autoplay</summary>
+		<div class="row"><label>Lobes <span class="val" id="v-orbitlobes"></span></label>
+			<input type="range" id="s-orbitlobes" min="1" max="6" step="1"></div>
+		<div class="row"><label>Orbit speed <span class="val" id="v-orbitspeed"></span></label>
+			<input type="range" id="s-orbitspeed" min="0.05" max="2" step="0.01"></div>
+		<div class="row"><label>Orbit radius <span class="val" id="v-orbitradius"></span></label>
+			<input type="range" id="s-orbitradius" min="0.05" max="0.45" step="0.01"></div>
+		<div class="row"><label>Auto dye <span class="val" id="v-autodye"></span></label>
+			<input type="range" id="s-autodye" min="0" max="1" step="0.05"></div>
+		<p class="note">Not in the source, which only ever emits on a mouse drag. Added so the
+		page has something to look at with nobody at the pointer.</p>
+	</details>
+
+	<details id="sec-colour">
+		<summary>Colour</summary>
+		<div class="row"><label>Dye red <span class="val" id="v-dyer"></span></label>
+			<input type="range" id="s-dyer" min="0" max="2" step="0.01"></div>
+		<div class="row"><label>Dye green <span class="val" id="v-dyeg"></span></label>
+			<input type="range" id="s-dyeg" min="0" max="2" step="0.01"></div>
+		<div class="row"><label>Dye blue <span class="val" id="v-dyeb"></span></label>
+			<input type="range" id="s-dyeb" min="0" max="2" step="0.01"></div>
+		<div class="row"><label>Particle red <span class="val" id="v-particr"></span></label>
+			<input type="range" id="s-particr" min="0" max="2" step="0.01"></div>
+		<div class="row"><label>Particle green <span class="val" id="v-particg"></span></label>
+			<input type="range" id="s-particg" min="0" max="2" step="0.01"></div>
+		<div class="row"><label>Particle blue <span class="val" id="v-particb"></span></label>
+			<input type="range" id="s-particb" min="0" max="2" step="0.01"></div>
+		<div class="row"><label>Particle alpha <span class="val" id="v-parta"></span></label>
+			<input type="range" id="s-parta" min="0" max="1" step="0.01"></div>
+		<p class="note">Defaults match the source exactly: dye (0.3, 0.5, 1.1), particles
+		(1.0, 0.5, 0.166) at 0.66 alpha, drawn additively.</p>
+	</details>
+
+	<details id="sec-rig">
+		<summary>The rig</summary>
+		<p class="note">A solid obstacle dropped into the orbit, off by default &mdash; the source
+		this lab reimplements never had one. The same jib-and-main section every other lab sails
+		with; only the sails are solid to the fluid, the hull is drawn but not.</p>
+		<div class="btns">
+			<button id="b-rig">rig off</button>
+		</div>
+		<div class="row"><label>Position, along the stream <span class="val" id="v-rigx"></span></label>
+			<input type="range" id="s-rigx" min="0.1" max="0.9" step="0.005"></div>
+		<div class="row"><label>Position, across the stream <span class="val" id="v-rigy"></span></label>
+			<input type="range" id="s-rigy" min="0.1" max="0.9" step="0.005"></div>
+		<div class="row"><label>Size <span class="val" id="v-rigsize"></span></label>
+			<input type="range" id="s-rigsize" min="0.03" max="0.30" step="0.005"></div>
+	</details>
+
+	<details id="sec-jib">
+		<summary>Jib</summary>
+		<div class="row"><label>Angle <span class="val" id="v-jang"></span></label>
+			<input type="range" id="s-jang" min="-180" max="180" step="1"></div>
+		<div class="row"><label>Tack, fore / aft <span class="val" id="v-jx"></span></label>
+			<input type="range" id="s-jx" min="-1.2" max="1.6" step="0.01"></div>
+		<div class="row"><label>Tack, athwartships <span class="val" id="v-jy"></span></label>
+			<input type="range" id="s-jy" min="-0.8" max="0.8" step="0.01"></div>
+		<div class="row"><label>Chord <span class="val" id="v-jchord"></span></label>
+			<input type="range" id="s-jchord" min="0.3" max="2.5" step="0.05"></div>
+		<div class="row"><label>Camber <span class="val" id="v-jcamber"></span></label>
+			<input type="range" id="s-jcamber" min="0" max="0.40" step="0.01"></div>
+		<div class="row"><label>Thickness <span class="val" id="v-jthick"></span></label>
+			<input type="range" id="s-jthick" min="0.02" max="0.40" step="0.01"></div>
+	</details>
+
+	<details id="sec-main">
+		<summary>Main</summary>
+		<div class="row"><label>Angle <span class="val" id="v-mang"></span></label>
+			<input type="range" id="s-mang" min="-180" max="180" step="1"></div>
+		<div class="row"><label>Mast, fore / aft <span class="val" id="v-mx"></span></label>
+			<input type="range" id="s-mx" min="-1.6" max="1.2" step="0.01"></div>
+		<div class="row"><label>Mast, athwartships <span class="val" id="v-my"></span></label>
+			<input type="range" id="s-my" min="-0.8" max="0.8" step="0.01"></div>
+		<div class="row"><label>Chord <span class="val" id="v-mchord"></span></label>
+			<input type="range" id="s-mchord" min="0.3" max="2.5" step="0.05"></div>
+		<div class="row"><label>Camber <span class="val" id="v-mcamber"></span></label>
+			<input type="range" id="s-mcamber" min="0" max="0.40" step="0.01"></div>
+		<div class="row"><label>Thickness <span class="val" id="v-mthick"></span></label>
+			<input type="range" id="s-mthick" min="0.02" max="0.40" step="0.01"></div>
+	</details>
+</div>
+
+<div id="hint" class="panel">
+	<div><b>drag</b> add a source &nbsp; <b>space</b> pause &nbsp; <b>H</b> hide this</div>
+	<div><span id="fps">&mdash; fps</span></div>
+</div>
+
+<div id="fatal"></div>
+
+<script src="../shared/labkit.js"></script>
+<script src="../shared/rig.js"></script>
+<script src="star.js"></script>
+<script>STARLAB.boot();</script>
+</body>
+</html>

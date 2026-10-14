@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>Vortex lab</title>
+<style>
+	:root { --ink:#e8f1fa; --dim:#90a6bd; --panel:rgba(9,16,26,0.86); --edge:rgba(140,190,235,0.22); --warm:#ffd9a0; }
+	html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#05070f; color:var(--ink);
+		font:12px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
+	canvas { display:block; position:fixed; inset:0; width:100%; height:100%; }
+	.panel { position:fixed; z-index:10; background:var(--panel); border:1px solid var(--edge); border-radius:6px; padding:10px 12px; }
+	#controls { top:14px; left:14px; width:250px; max-height:calc(100% - 28px); overflow-y:auto; }
+	#controls h1 { margin:0 0 4px; font-size:14px; color:var(--warm); }
+	#controls p.lede { margin:0 0 10px; color:var(--dim); font-size:11px; line-height:1.5; }
+	.row { margin:7px 0; }
+	.row label { display:flex; justify-content:space-between; color:var(--dim); margin-bottom:3px; }
+	.row label .val { color:var(--ink); }
+	.readout div { display:flex; justify-content:space-between; margin:3px 0; color:var(--dim); }
+	.readout .val { color:var(--ink); }
+	p.note { margin:4px 2px 8px; color:#7f93a8; font-size:10px; line-height:1.45; }
+	.row input[type=range] { width:100%; accent-color:#7fc6ff; }
+	button { background:rgba(30,48,68,0.7); border:1px solid var(--edge); color:var(--ink);
+		font:inherit; padding:4px 9px; border-radius:4px; cursor:pointer; }
+	button.on { background:#2f6ea3; border-color:#7fc6ff; color:#fff; }
+	.btns { display:flex; gap:5px; flex-wrap:wrap; margin-top:8px; }
+	.btns button { flex:1; }
+	details { margin:10px 0 0; }
+	details > summary {
+		list-style:none; cursor:pointer; user-select:none;
+		margin:0 0 4px; padding:5px 0 5px 16px; position:relative;
+		font-size:10px; letter-spacing:0.16em; text-transform:uppercase; color:#9fc4e6;
+		border-bottom:1px solid rgba(140,190,235,0.16);
+	}
+	details > summary::-webkit-details-marker { display:none; }
+	details > summary::before {
+		content:'\25B8'; position:absolute; left:2px; top:5px;
+		transition:transform 0.15s ease; color:#7fc6ff;
+	}
+	details[open] > summary::before { transform:rotate(90deg); }
+	details > summary:hover { color:#cfe6ff; }
+	.head { font-size:10px; letter-spacing:0.16em; text-transform:uppercase; color:#9fc4e6;
+		margin:0 0 6px; }
+	#hint { right:14px; bottom:14px; color:var(--dim); text-align:right; font-size:11px; }
+	#hint b { color:var(--ink); }
+	#fatal { display:none; position:fixed; inset:25% 12% auto; z-index:100; padding:16px;
+		background:rgba(60,12,12,0.92); border:1px solid #d06a5a; border-radius:6px; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="controls" class="panel">
+	<h1>Vortex lab</h1>
+	<p class="lede">A circular obstacle in a uniform stream. Watch the wake behind it: past a
+	threshold speed it stops sitting still and starts alternating, peeling off one vortex to
+	each side in turn &mdash; the von K&aacute;rm&aacute;n vortex street. Reproduces
+	<a href="https://github.com/amandaghassaei/VortexShedding" style="color:#7fc6ff">amandaghassaei's
+	VortexShedding</a> demo: same pipeline, same circular obstacle, a sturdier pressure solve
+	underneath.</p>
+
+	<div class="head">Measured on the flow</div>
+	<div class="readout">
+		<div><span>Reynolds number</span><span class="val" id="r-re">&mdash;</span></div>
+		<div><span>Shedding frequency</span><span class="val" id="r-hz">&mdash;</span></div>
+		<div><span>Strouhal number</span><span class="val" id="r-st">&mdash;</span></div>
+	</div>
+	<p class="note">Reynolds is U&middot;D/&nu; from the sliders directly, a real number solved
+	for &mdash; but this grid's own numerical dissipation adds to it, same as the original demo's
+	does, so treat it as a lower bound on the total damping at work rather than a literal match to
+	a real cylinder's Re. Shedding frequency is a live, noisy estimate off one probe point
+	downstream &mdash; give it a few seconds after any change before trusting it. Textbook Strouhal
+	for a real cylinder sits near 0.2; this solver's own numerical diffusion generally pulls it
+	somewhat lower.</p>
+
+	<div class="btns">
+		<button id="b-pause">pause</button>
+		<button id="b-vel">velocity field</button>
+		<button id="b-clear">clear</button>
+	</div>
+	<div class="head" style="margin-top:12px">Presets</div>
+	<div id="preset-bar"></div>
+	<div class="btns">
+		<button id="b-reset">reset</button>
+	</div>
+
+	<details id="sec-air" open>
+		<summary>The flow</summary>
+		<div class="row"><label>Flow speed <span class="val" id="v-flow"></span></label>
+			<input type="range" id="s-flow" min="10" max="150" step="1"></div>
+		<div class="row"><label>Viscosity <span class="val" id="v-visc"></span></label>
+			<input type="range" id="s-visc" min="0.05" max="3" step="0.02"></div>
+		<div class="row"><label>Vorticity <span class="val" id="v-vort"></span></label>
+			<input type="range" id="s-vort" min="0" max="40" step="1"></div>
+		<div class="row"><label>Pressure iterations <span class="val" id="v-iter"></span></label>
+			<input type="range" id="s-iter" min="4" max="60" step="1"></div>
+		<p class="note">Viscosity is a real Jacobi diffusion pass, not a fudge &mdash; it's what
+		the Reynolds number above is computed from. Vorticity confinement isn't in the original
+		demo at all (it relies on the advection step's own numerical diffusion); it's here to push
+		the wake further into unsteadiness than viscosity alone allows. Leave it at 0 to see the
+		demo as originally built.</p>
+	</details>
+
+	<details id="sec-obstacle">
+		<summary>The obstacle</summary>
+		<div class="row"><label>Radius <span class="val" id="v-rad"></span></label>
+			<input type="range" id="s-rad" min="0.03" max="0.18" step="0.005"></div>
+		<div class="row"><label>Position, along the stream <span class="val" id="v-ox"></span></label>
+			<input type="range" id="s-ox" min="0.05" max="0.4" step="0.005"></div>
+		<div class="row"><label>Position, across the stream <span class="val" id="v-oy"></span></label>
+			<input type="range" id="s-oy" min="0.2" max="0.8" step="0.005"></div>
+		<p class="note">Radius and position are fractions of the channel, so they hold their
+		meaning across window sizes. Bigger radius or slower viscosity both raise the effective
+		Reynolds number and shed harder.</p>
+	</details>
+
+	<details id="sec-dye">
+		<summary>The dye</summary>
+		<div class="row"><label>Injection <span class="val" id="v-dye"></span></label>
+			<input type="range" id="s-dye" min="0" max="3" step="0.05"></div>
+		<p class="note">Alternating stripes fed in at the inflow, the same trick the original demo
+		uses &mdash; a plain wash of dye shows you speed but not rotation; stripes let you actually
+		count the vortices as they roll up.</p>
+	</details>
+
+	<details id="sec-shape">
+		<summary>The obstacle</summary>
+		<p class="note">What the flow runs into. The cylinder is what sheds the von K&aacute;rm&aacute;n
+		street above and is the default; the rig is the same jib-and-main section every other lab
+		sails with, dropped in here as a second solid shape. "Both" masks in whichever cells either
+		one occupies.</p>
+		<div class="btns">
+			<button id="b-shape-cyl">cylinder</button>
+			<button id="b-shape-rig">rig</button>
+			<button id="b-shape-both">both</button>
+		</div>
+		<div class="row"><label>Rig position, along the stream <span class="val" id="v-rigx"></span></label>
+			<input type="range" id="s-rigx" min="0.05" max="0.95" step="0.005"></div>
+		<div class="row"><label>Rig position, across the stream <span class="val" id="v-rigy"></span></label>
+			<input type="range" id="s-rigy" min="0.1" max="0.9" step="0.005"></div>
+		<div class="row"><label>Rig size <span class="val" id="v-rigsize"></span></label>
+			<input type="range" id="s-rigsize" min="0.03" max="0.30" step="0.005"></div>
+	</details>
+
+	<details id="sec-jib">
+		<summary>Jib</summary>
+		<div class="row"><label>Angle <span class="val" id="v-jang"></span></label>
+			<input type="range" id="s-jang" min="-180" max="180" step="1"></div>
+		<div class="row"><label>Tack, fore / aft <span class="val" id="v-jx"></span></label>
+			<input type="range" id="s-jx" min="-1.2" max="1.6" step="0.01"></div>
+		<div class="row"><label>Tack, athwartships <span class="val" id="v-jy"></span></label>
+			<input type="range" id="s-jy" min="-0.8" max="0.8" step="0.01"></div>
+		<div class="row"><label>Chord <span class="val" id="v-jchord"></span></label>
+			<input type="range" id="s-jchord" min="0.3" max="2.5" step="0.05"></div>
+		<div class="row"><label>Camber <span class="val" id="v-jcamber"></span></label>
+			<input type="range" id="s-jcamber" min="0" max="0.40" step="0.01"></div>
+		<div class="row"><label>Thickness <span class="val" id="v-jthick"></span></label>
+			<input type="range" id="s-jthick" min="0.02" max="0.40" step="0.01"></div>
+	</details>
+
+	<details id="sec-main">
+		<summary>Main</summary>
+		<div class="row"><label>Angle <span class="val" id="v-mang"></span></label>
+			<input type="range" id="s-mang" min="-180" max="180" step="1"></div>
+		<div class="row"><label>Mast, fore / aft <span class="val" id="v-mx"></span></label>
+			<input type="range" id="s-mx" min="-1.6" max="1.2" step="0.01"></div>
+		<div class="row"><label>Mast, athwartships <span class="val" id="v-my"></span></label>
+			<input type="range" id="s-my" min="-0.8" max="0.8" step="0.01"></div>
+		<div class="row"><label>Chord <span class="val" id="v-mchord"></span></label>
+			<input type="range" id="s-mchord" min="0.3" max="2.5" step="0.05"></div>
+		<div class="row"><label>Camber <span class="val" id="v-mcamber"></span></label>
+			<input type="range" id="s-mcamber" min="0" max="0.40" step="0.01"></div>
+		<div class="row"><label>Thickness <span class="val" id="v-mthick"></span></label>
+			<input type="range" id="s-mthick" min="0.02" max="0.40" step="0.01"></div>
+	</details>
+</div>
+
+<div id="hint" class="panel">
+	<div><b>drag</b> push the air &nbsp; <b>space</b> pause &nbsp; <b>H</b> hide this</div>
+	<div><span id="fps">&mdash; fps</span></div>
+</div>
+
+<div id="fatal"></div>
+
+<script src="../shared/labkit.js"></script>
+<script src="../shared/rig.js"></script>
+<script src="vortex.js"></script>
+<script>VORTEXLAB.boot();</script>
+</body>
+</html>
