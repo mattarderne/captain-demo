@@ -13,23 +13,27 @@
 // the pressure Jacobi solve treats it as Dirichlet p = 0 there (a ghost cell
 // at zero pressure, T = -C in the stencil) rather than the zero-gradient wall
 // condition every other boundary uses. A rigid lid (zero-gradient, T = C)
-// puts a same-sign image vortex above the foil and INCREASES lift as it
-// nears the surface — that is the wrong physics for a foiler, and it is the
-// easy mistake to make by treating the water's top edge like any other wall.
-// A constant-pressure free surface puts an OPPOSITE-sign image there instead,
-// which is what actually happens as a hydrofoil comes up shallow, and it is
-// why lift falls off (and eventually the section starts drawing air) as a
-// foiling boat comes up onto her foils in shoal water. Sides and the seabed
-// keep the ordinary zero-gradient wall condition; only the top changes.
+// mirrors the foil's bound vortex with an OPPOSITE-sign image above it, which
+// speeds the flow over the foil and INCREASES lift as it nears the surface.
+// That is the low-speed limit, where gravity holds the surface flat, and it is
+// the easy mistake to make by treating the water's top edge like any other
+// wall. A constant-pressure surface needs a SAME-sign image instead, which
+// slows the flow over the foil, so lift falls off as she comes up shallow.
+// That is the high-speed limit (depth Froude number U / sqrt(g h) well above
+// 1), which is where a foiler spends her time once she is flying. Sides and
+// the seabed keep the ordinary zero-gradient wall condition. Only the top
+// changes.
 //
 // What this does NOT model, on purpose: the surface itself never deforms, so
 // there is no wave-making drag and no wave elevation feeding back into the
 // flow; there is no ventilation (air drawn down the low-pressure side once a
 // real foil gets close enough to breach) and no cavitation. The Dirichlet lid
-// is the LINEARISED free-surface condition — it gets the sign and the trend
-// right, and it is the entire mechanism by which "shallower means less lift"
-// shows up here, but it is not a model of what happens in the last few
-// centimetres before a real foil actually broaches.
+// is the INFINITE-FROUDE limit of the linearised free-surface condition: there
+// is no gravity in it, so no waves. It gets the sign and the trend right at
+// flying speed, and it is the entire mechanism by which "shallower means less
+// lift" shows up here. Around take-off speed (depth Froude number near 1) real
+// surface waves change the lift and add wave drag, and none of that is here,
+// nor is what happens in the last few centimetres before a foil broaches.
 (function (root) {
 	'use strict';
 
@@ -46,8 +50,14 @@
 		// and turning it down is what actually let the sweep's signal (a
 		// few percent, close to the surface) come out from under it rather
 		// than needing an impractically long hold to do the same job.
-		curl: 3,
-		viscosity: 0.35,
+		// Off by default: confinement feeds energy into every eddy, which held
+		// a large separated vortex over the foil and made the force readings
+		// swing. With it off, lift on a symmetric section at 5 degrees settles
+		// at the thin-aerofoil value.
+		curl: 0,
+		// A uniform decay on velocity, not a real viscosity: kept as a
+		// slider for the look of the wake, off by default.
+		viscosity: 0,
 		iterations: 40,
 
 		// 'linear': the Dirichlet p=0 lid described above — flat, stable,
@@ -154,6 +164,8 @@
 	var kit = LABKIT.create({
 		store: 'foillab.params.v1',
 		params: params,
+		schema: 3,
+		resetOnUpgrade: ['viscosity', 'curl'],
 		defaultOpen: ['sec-foil'],
 		// No preset bar on this page — an explicit empty table rather than
 		// silently inheriting smoke-lab's (a wind/rig vocabulary this lab
@@ -270,6 +282,15 @@
 
 	// ---- shaders -----------------------------------------------------------
 
+	// Sets every texel to one value: used to start the water already moving
+	// at the free-stream speed, so a reset does not throw an impulsive start
+	// (and its starting vortex) at the foils.
+	var FILL_FRAG = [
+		'precision highp float;',
+		'uniform vec4 value;',
+		'void main() { gl_FragColor = value; }'
+	].join('\n');
+
 	var CLEAR_FRAG = [
 		'precision mediump float; precision mediump sampler2D;',
 		'varying vec2 vUv; uniform sampler2D uTexture; uniform float value;',
@@ -366,7 +387,7 @@
 		'precision mediump float; precision mediump sampler2D;',
 		'varying vec2 vUv, vL, vR, vT, vB;',
 		'uniform sampler2D uVelocity, uObstacle;',
-		'uniform float topOpen;',
+		'uniform float topOpen, openFlow, inflow;',
 		'void main() {',
 		'  float L = texture2D(uVelocity, vL).x;',
 		'  float R = texture2D(uVelocity, vR).x;',
@@ -381,8 +402,11 @@
 		'  if (oR.x > 0.5) R = oR.y;',
 		'  if (oT.x > 0.5) T = oT.z;',
 		'  if (oB.x > 0.5) B = oB.z;',
-		'  if (vL.x < 0.0) { L = -C.x; }',
-		'  if (vR.x > 1.0) { R = -C.x; }',
+		// Linear mode: water comes in at the left at the free-stream speed
+		// and leaves through the right edge. Two-phase mode keeps the closed
+		// box it was built with.
+		'  if (vL.x < 0.0) { L = openFlow > 0.5 ? inflow : -C.x; }',
+		'  if (vR.x > 1.0) { R = openFlow > 0.5 ? C.x : -C.x; }',
 		'  if (topOpen < 0.5 && vT.y > 1.0) { T = -C.y; }',
 		'  if (vB.y < 0.0) { B = -C.y; }',
 		'  gl_FragColor = vec4(0.5 * (R - L + T - B), 0.0, 0.0, 1.0);',
@@ -435,13 +459,13 @@
 	// p = 0, and it is what makes the water surface a PRESSURE RELEASE rather
 	// than a lid: the low-pressure suction side of a foil lifting close under
 	// it partially unloads against the open surface above, instead of being
-	// reinforced by a same-sign image the way a rigid ceiling would reinforce
-	// it. Get this sign backwards and lift RISES as the foil comes up
+	// reinforced by the opposite-sign image a rigid ceiling would put there. Get this sign backwards and lift RISES as the foil comes up
 	// shallow, which is the rigid-lid answer and the wrong one for a foiler.
 	var PRESSURE_FRAG = [
 		'precision mediump float; precision mediump sampler2D;',
 		'varying vec2 vUv, vL, vR, vT, vB;',
 		'uniform sampler2D uPressure, uDivergence, uObstacle;',
+		'uniform float openFlow;',
 		'void main() {',
 		'  float C = texture2D(uPressure, vUv).x;',
 		'  float L = texture2D(uPressure, vL).x;',
@@ -450,6 +474,7 @@
 		'  float B = texture2D(uPressure, vB).x;',
 		'  if (texture2D(uObstacle, vL).x > 0.5) L = C;',
 		'  if (texture2D(uObstacle, vR).x > 0.5) R = C;',
+		'  else if (openFlow > 0.5 && vR.x > 1.0) R = -C;',
 		'  if (texture2D(uObstacle, vB).x > 0.5) B = C;',
 		'  if (texture2D(uObstacle, vT).x > 0.5) {',
 		'    T = C;',
@@ -469,6 +494,7 @@
 		'precision mediump float; precision mediump sampler2D;',
 		'varying vec2 vUv, vL, vR, vT, vB;',
 		'uniform sampler2D uPressure, uVelocity, uObstacle;',
+		'uniform float openFlow;',
 		'void main() {',
 		'  float C = texture2D(uPressure, vUv).x;',
 		'  float L = texture2D(uPressure, vL).x;',
@@ -477,6 +503,7 @@
 		'  float B = texture2D(uPressure, vB).x;',
 		'  if (texture2D(uObstacle, vL).x > 0.5) L = C;',
 		'  if (texture2D(uObstacle, vR).x > 0.5) R = C;',
+		'  else if (openFlow > 0.5 && vR.x > 1.0) R = -C;',
 		'  if (texture2D(uObstacle, vB).x > 0.5) B = C;',
 		'  if (texture2D(uObstacle, vT).x > 0.5) {',
 		'    T = C;',
@@ -678,7 +705,10 @@
 		'  vec2 v = texture2D(uVelocity, vUv).xy;',
 		'  float inflow = smoothstep(0.10, 0.0, vUv.x);',
 		'  vec2 target = vec2(flow, 0.0);',
-		'  float k = clamp((inflow * 12.0 + 0.45) * dt, 0.0, 1.0);',
+		// Inflow strip only. This used to add 0.45/s everywhere, which pulled
+		// the whole tank back toward free stream and damped the wake and the
+		// downwash the stabiliser sits in.
+		'  float k = clamp(inflow * 12.0 * dt, 0.0, 1.0);',
 		'  gl_FragColor = vec4(mix(v, target, k), 0.0, 1.0);',
 		'}'
 	].join('\n');
@@ -768,7 +798,7 @@
 		'precision highp float;',
 		'varying vec2 vUv, vL, vR, vT, vB;',
 		'uniform sampler2D uPressure, uObstacle;',
-		'uniform float aspectRatio;',
+		'uniform vec2 simSize, originCells;',
 		'void main() {',
 		'  float mL = texture2D(uObstacle, vL).x;',
 		'  float mR = texture2D(uObstacle, vR).x;',
@@ -776,8 +806,12 @@
 		'  float mB = texture2D(uObstacle, vB).x;',
 		'  vec2 grad = 0.5 * vec2(mR - mL, mT - mB);',
 		'  float p = texture2D(uPressure, vUv).x;',
-		'  vec2 f = p * vec2(grad.x, grad.y * aspectRatio);',
-		'  gl_FragColor = vec4(f, abs(grad.x) + abs(grad.y), 1.0);',
+		// Run at the sim's own resolution, so every cell is counted once and
+		// both directions use the same square cell. r is this cell's offset
+		// from the foil's leading edge, in cells, for the moment.
+		'  vec2 f = p * grad;',
+		'  vec2 r = vUv * simSize - originCells;',
+		'  gl_FragColor = vec4(f, r.x * f.y - r.y * f.x, 0.0);',
 		'}'
 	].join('\n');
 
@@ -785,13 +819,16 @@
 		'precision highp float;',
 		'varying vec2 vUv;',
 		'uniform sampler2D uSrc;',
-		'uniform vec2 srcTexel;',
+		'uniform vec2 srcSize;',
+		// Each output texel sums the 2x2 block under it, skipping texels past
+		// an odd edge, so the chain adds every cell exactly once.
+		'vec4 at(vec2 c) {',
+		'  if (c.x >= srcSize.x || c.y >= srcSize.y) return vec4(0.0);',
+		'  return texture2D(uSrc, (c + 0.5) / srcSize);',
+		'}',
 		'void main() {',
-		'  vec2 b = floor(vUv / (srcTexel * 2.0)) * 2.0;',
-		'  gl_FragColor = texture2D(uSrc, (b + vec2(0.5, 0.5)) * srcTexel)',
-		'            + texture2D(uSrc, (b + vec2(1.5, 0.5)) * srcTexel)',
-		'            + texture2D(uSrc, (b + vec2(0.5, 1.5)) * srcTexel)',
-		'            + texture2D(uSrc, (b + vec2(1.5, 1.5)) * srcTexel);',
+		'  vec2 b = floor(gl_FragCoord.xy) * 2.0;',
+		'  gl_FragColor = at(b) + at(b + vec2(1.0, 0.0)) + at(b + vec2(0.0, 1.0)) + at(b + vec2(1.0, 1.0));',
 		'}'
 	].join('\n');
 
@@ -832,7 +869,13 @@
 		'uniform float aspectRatio, mainAngle, mainChord, mainCamber, mainThick;',
 		'uniform float stabAngle, stabChord, stabCamber, stabThick;',
 		'uniform float showVelocity, colourSpeed, speedRef, speedContrast, surfaceY, twoPhase;',
+		'uniform float showRig, vent, mastHalf;',
+		'uniform vec2 mastBase, fuseA, fuseB;',
 		FOIL_GLSL,
+		'float segDist(vec2 p, vec2 a, vec2 b) {',
+		'  vec2 ab = b - a; float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-9), 0.0, 1.0);',
+		'  return length(p - a - ab * t);',
+		'}',
 		'void main() {',
 		'  vec3 c;',
 		'  if (showVelocity > 0.5) {',
@@ -884,6 +927,27 @@
 		'  c = mix(c, vec3(1.00, 0.62, 0.30), 1.0 - smoothstep(0.0, ed, dStab));',
 		'  float rim = min(dMain, dStab);',
 		'  c = mix(c, vec3(0.04, 0.06, 0.09), (1.0 - smoothstep(ed, ed * 3.0, abs(rim))) * 0.7);',
+		// The rig: fuselage between the two leading edges, mast from its base
+		// up through the surface. Drawn only: neither is in the solver, a
+		// vertical mast would be a wall across this side-on slice.
+		'  if (showRig > 0.5) {',
+		'    vec2 q = vUv; q.x *= aspectRatio;',
+		'    vec2 a = fuseA; a.x *= aspectRatio; vec2 b = fuseB; b.x *= aspectRatio;',
+		'    vec2 m0 = mastBase; m0.x *= aspectRatio;',
+		'    float dF = segDist(q, a, b) - 0.0035;',
+		'    float dM = segDist(q, m0, vec2(m0.x, surfaceY + 0.05)) - mastHalf;',
+		'    c = mix(c, vec3(0.55, 0.60, 0.66), 1.0 - smoothstep(0.0, 0.002, min(dF, dM)));',
+		// Ventilation: air drawn down the mast and over the back of the
+		// main foil once she has breached.
+		'    if (vent > 0.01) {',
+		'      vec2 lm = rotateFoil(pm, mainAngle);',
+		'      float upper = step(0.0, dMain) * (1.0 - smoothstep(0.0, 0.016, dMain));',
+		'      float side = step(0.0, lm.y);',
+		'      float sheet = (1.0 - smoothstep(0.0, 0.012, abs(q.x - m0.x + 0.006))) * step(m0.y, q.y);',
+		'      float cav = max(upper * side, sheet * 0.7);',
+		'      c = mix(c, vec3(0.78, 0.88, 0.96), cav * vent * 0.85);',
+		'    }',
+		'  }',
 		'  gl_FragColor = vec4(c, 1.0);',
 		'}'
 	].join('\n');
@@ -898,22 +962,46 @@
 	// The assembly is a rigid GROUP (groupX, depth) that both foils share,
 	// plus each foil's own independent offset from that shared depth. Zero
 	// offset both sides reproduces the original rigidly-paired behaviour.
+	// THE RIG. When something outside this file (flight.js) takes the
+	// assembly over, it places it as one rigid body: a fuselage line with the
+	// mast at `pivotX`, the main foil's leading edge `mainAhead` metres ahead
+	// of the mast and the stabiliser's `stabAft` behind, all pitched together
+	// about the mast base. Depth is the mast base's, in metres below the
+	// surface; `metresPerHeight` is the physical size of one domain height.
+	var rig = null;
+	LAB.setRig = function (r) { rig = r; };
+	LAB.getRig = function () { return rig; };
+
+	function rigPoint(ax, ay) {
+		var H = rig.metresPerHeight, aspect = canvas.width / canvas.height;
+		var th = rig.pitch * DEG, c = Math.cos(th), s = Math.sin(th);
+		// Nose-up is clockwise with water flowing in +x, so a point ahead of
+		// the mast rises as the pitch increases.
+		var rx = ax * c + ay * s, ry = -ax * s + ay * c;
+		return [rig.pivotX + rx / (H * aspect), surfaceY() - rig.depth / H + ry / H];
+	}
+	LAB.rigPoint = function (ax, ay) { return rig ? rigPoint(ax, ay) : null; };
+
 	function mainOriginXY() {
+		if (rig) return rigPoint(-rig.mainAhead, 0);
 		return [params.groupX, surfaceY() - params.depth - params.mainDepthOffset];
 	}
 	function stabOriginXY() {
+		if (rig) return rigPoint(rig.stabAft, 0);
 		return [params.groupX + params.gap, surfaceY() - params.depth - params.stabDepthOffset];
 	}
+	function mainAngle() { return (params.mainIncidence + (rig ? rig.pitch : 0)) * DEG; }
+	function stabAngle() { return (params.stabIncidence + (rig ? rig.pitch : 0)) * DEG; }
 
 	function setFoilUniforms(p) {
 		var mo = mainOriginXY(), so = stabOriginXY();
 		gl.uniform2f(p.uniforms.mainOrigin, mo[0], mo[1]);
 		gl.uniform2f(p.uniforms.stabOrigin, so[0], so[1]);
-		gl.uniform1f(p.uniforms.mainAngle, params.mainIncidence * DEG);
+		gl.uniform1f(p.uniforms.mainAngle, mainAngle());
 		gl.uniform1f(p.uniforms.mainChord, params.mainChord);
 		gl.uniform1f(p.uniforms.mainCamber, params.mainCamber);
 		gl.uniform1f(p.uniforms.mainThick, params.mainThick);
-		gl.uniform1f(p.uniforms.stabAngle, params.stabIncidence * DEG);
+		gl.uniform1f(p.uniforms.stabAngle, stabAngle());
 		gl.uniform1f(p.uniforms.stabChord, params.stabChord);
 		gl.uniform1f(p.uniforms.stabCamber, params.stabCamber);
 		gl.uniform1f(p.uniforms.stabThick, params.stabThick);
@@ -937,11 +1025,13 @@
 		var p = programs.foilMask;
 		gl.useProgram(p.handle);
 		gl.uniform1f(p.uniforms.aspectRatio, canvas.width / canvas.height);
-		gl.uniform2f(p.uniforms.vel, groupVel.x, groupVel.y);
+		// groupVel is in screen fractions per second; the solver works in
+		// cells per second.
+		gl.uniform2f(p.uniforms.vel, groupVel.x * LAB.simWidth, groupVel.y * LAB.simHeight);
 
 		var mo = mainOriginXY();
 		gl.uniform2f(p.uniforms.origin, mo[0], mo[1]);
-		gl.uniform1f(p.uniforms.angle, params.mainIncidence * DEG);
+		gl.uniform1f(p.uniforms.angle, mainAngle());
 		gl.uniform1f(p.uniforms.chord, params.mainChord);
 		gl.uniform1f(p.uniforms.camber, params.mainCamber);
 		gl.uniform1f(p.uniforms.thick, params.mainThick);
@@ -949,7 +1039,7 @@
 
 		var so = stabOriginXY();
 		gl.uniform2f(p.uniforms.origin, so[0], so[1]);
-		gl.uniform1f(p.uniforms.angle, params.stabIncidence * DEG);
+		gl.uniform1f(p.uniforms.angle, stabAngle());
 		gl.uniform1f(p.uniforms.chord, params.stabChord);
 		gl.uniform1f(p.uniforms.camber, params.stabCamber);
 		gl.uniform1f(p.uniforms.thick, params.stabThick);
@@ -963,6 +1053,12 @@
 	}
 
 	var lastTime = 0, frames = 0, fpsTimer = 0, simTime = 0;
+	// The solver's pressure scales with its timestep, so a varying frame time
+	// moved the force readings (a 30 fps frame read about 36% more lift than
+	// a 60 fps one). The sim now always steps at SIM_DT, catching up with at
+	// most two steps a frame.
+	var SIM_DT = 1 / 60, simAccum = 0, dragFrom = null, rigFrom = null;
+	LAB.SIM_DT = SIM_DT;
 
 	function step(dt) {
 		gl.disable(gl.BLEND);
@@ -1004,25 +1100,33 @@
 		gl.uniform1i(p.uniforms.uVelocity, velocity.read.attach(0));
 		gl.uniform1i(p.uniforms.uObstacle, obstacleFbo.attach(1));
 		gl.uniform1f(p.uniforms.topOpen, twoPhase ? 0 : 1);
+		gl.uniform1f(p.uniforms.openFlow, twoPhase ? 0 : 1);
+		gl.uniform1f(p.uniforms.inflow, params.flow);
 		blit(divergenceFbo);
 
 		p = programs.clear;
 		gl.useProgram(p.handle);
 		gl.uniform1i(p.uniforms.uTexture, pressure.read.attach(0));
-		gl.uniform1f(p.uniforms.value, 0.8);
+		// Linear mode keeps last frame's pressure as the starting guess: the
+		// p = 0 top pins the solve, so there is no drift to bleed off, and
+		// cutting it by a fifth each frame was costing about 40% of the lift.
+		// Two-phase mode is closed on all sides, so it keeps the bleed.
+		gl.uniform1f(p.uniforms.value, twoPhase ? 0.8 : 1.0);
 		blit(pressure.write);
 		pressure.swap();
 
 		p = twoPhase ? programs.pressureVD : programs.pressure;
 		gl.useProgram(p.handle);
 		gl.uniform2f(p.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+		if (!twoPhase) gl.uniform1f(p.uniforms.openFlow, 1);
 		gl.uniform1i(p.uniforms.uDivergence, divergenceFbo.attach(0));
 		gl.uniform1i(p.uniforms.uObstacle, obstacleFbo.attach(2));
 		if (twoPhase) {
 			gl.uniform1i(p.uniforms.uPhase, phase.read.attach(3));
 			gl.uniform1f(p.uniforms.rhoAir, 1 / Math.max(1, params.rhoAirRatio));
 		}
-		for (var i = 0; i < params.iterations; i++) {
+		var iters = LAB.iterationsOverride || params.iterations;
+		for (var i = 0; i < iters; i++) {
 			gl.uniform1i(p.uniforms.uPressure, pressure.read.attach(1));
 			blit(pressure.write);
 			pressure.swap();
@@ -1031,6 +1135,7 @@
 		p = twoPhase ? programs.gradientVD : programs.gradient;
 		gl.useProgram(p.handle);
 		gl.uniform2f(p.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+		if (!twoPhase) gl.uniform1f(p.uniforms.openFlow, 1);
 		gl.uniform1i(p.uniforms.uPressure, pressure.read.attach(0));
 		gl.uniform1i(p.uniforms.uVelocity, velocity.read.attach(1));
 		gl.uniform1i(p.uniforms.uObstacle, obstacleFbo.attach(2));
@@ -1176,7 +1281,8 @@
 	// unsteady wake is not a measurement (a probe read 1.41 and 0.94 at
 	// identical settings before this averaging was added).
 	function makeMeter() {
-		return { lift: 0, drag: 0, liftFast: 0, acc: null, ready: false, window: 2.0 };
+		return { lift: 0, drag: 0, liftFast: 0, acc: null, ready: false, window: 2.0,
+			cl: 0, cd: 0, cm: 0 };
 	}
 	var mainForce = makeMeter();
 	var stabForce = makeMeter();
@@ -1207,13 +1313,16 @@
 		}
 	}
 
-	function measureFoilForce(maskFbo, meter, dt) {
+	// The sum over the grid of p * grad(mask), and of its moment about the
+	// foil's leading edge, in solver units: pressure times cells.
+	function sumFoilForce(maskFbo, origin) {
 		var p = programs.force;
 		gl.useProgram(p.handle);
 		gl.uniform2f(p.uniforms.texelSize, forceFbo.texelSizeX, forceFbo.texelSizeY);
 		gl.uniform1i(p.uniforms.uPressure, pressure.read.attach(0));
 		gl.uniform1i(p.uniforms.uObstacle, maskFbo.attach(1));
-		gl.uniform1f(p.uniforms.aspectRatio, canvas.width / canvas.height);
+		gl.uniform2f(p.uniforms.simSize, LAB.simWidth, LAB.simHeight);
+		gl.uniform2f(p.uniforms.originCells, origin[0] * LAB.simWidth, origin[1] * LAB.simHeight);
 		blit(forceFbo);
 
 		p = programs.reduce;
@@ -1221,51 +1330,78 @@
 		var src = forceFbo;
 		for (var i = 0; i < reduceChain.length; i++) {
 			gl.uniform1i(p.uniforms.uSrc, src.attach(0));
-			gl.uniform2f(p.uniforms.srcTexel, src.texelSizeX, src.texelSizeY);
+			gl.uniform2f(p.uniforms.srcSize, src.width, src.height);
 			blit(reduceChain[i]);
 			src = reduceChain[i];
 		}
 
 		var last = reduceChain[reduceChain.length - 1];
 		gl.bindFramebuffer(gl.FRAMEBUFFER, last.fbo);
-		var fx, fy;
+		var out;
 		if (ext.isWebGL2 || ext.readFloat) {
 			gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, forceRead);
-			fx = forceRead[0]; fy = forceRead[1];
+			out = [forceRead[0], forceRead[1], forceRead[2]];
 		} else {
 			gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, forceByte);
-			fx = (forceByte[0] / 255 - 0.5) * 2; fy = (forceByte[1] / 255 - 0.5) * 2;
+			out = [(forceByte[0] / 255 - 0.5) * 2, (forceByte[1] / 255 - 0.5) * 2, 0];
 		}
 		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-		if (!isFinite(fx) || !isFinite(fy)) return;
+		return out;
+	}
 
-		// Normalised by dynamic pressure times the main chord (fixed
-		// reference length for both foils, so a run's main-vs-stabiliser
-		// comparison and its depth sweep both stay apples-to-apples).
-		var q = Math.max(1e-6, params.flow * params.flow * params.mainChord);
-		fx /= q; fy /= q;
+	// From solver units to coefficients. The gradient pass subtracts
+	// (p_R - p_L) from a velocity measured in cells per second, so a solver
+	// pressure p maps to a physical one of 2 rho dx^2 p / dt. Dividing by the
+	// dynamic pressure 1/2 rho (flow dx)^2 and a chord of c cells, with the
+	// sum already a line integral in cells, leaves C = 4 sum / (dt flow^2 c).
+	// Lift is up, drag is downstream, and the moment is about the foil's own
+	// leading edge, nose-up positive, per chord squared.
+	function coefficients(raw, chordCells, dt) {
+		var k = 4 / Math.max(1e-9, dt * params.flow * params.flow);
+		var c = Math.max(1e-6, chordCells);
+		return { cl: k * raw[1] / c, cd: k * raw[0] / c, cm: -k * raw[2] / (c * c) };
+	}
+	LAB.coefficients = coefficients;
 
-		meter.instFx = fx;
+	function measureFoilForce(maskFbo, origin, chord, meter, dt) {
+		var raw = sumFoilForce(maskFbo, origin);
+		if (!isFinite(raw[0]) || !isFinite(raw[1]) || !isFinite(raw[2])) return;
+		var own = coefficients(raw, chord * LAB.simHeight, dt);
+		// `lift` keeps its old meaning for the sweeps and the readout: both
+		// foils on the main chord, so main and stabiliser add up directly.
+		var onMain = coefficients(raw, params.mainChord * LAB.simHeight, dt);
+		var fy = onMain.cl;
+
+		meter.instFx = onMain.cd;
 		meter.instFy = fy;
+		meter.inst = own;
 
 		var k = 1 - Math.exp(-dt / 0.35);
 		meter.liftFast += (fy - meter.liftFast) * k;
 
-		if (!meter.acc) meter.acc = { lift: 0, drag: 0, t: 0 };
+		if (!meter.acc) meter.acc = { lift: 0, drag: 0, cl: 0, cd: 0, cm: 0, t: 0 };
 		meter.acc.lift += fy * dt;
-		meter.acc.drag += fx * dt;
+		meter.acc.drag += onMain.cd * dt;
+		meter.acc.cl += own.cl * dt;
+		meter.acc.cd += own.cd * dt;
+		meter.acc.cm += own.cm * dt;
 		meter.acc.t += dt;
 		if (meter.acc.t >= meter.window) {
-			meter.lift = meter.acc.lift / meter.acc.t;
-			meter.drag = meter.acc.drag / meter.acc.t;
+			var t = meter.acc.t;
+			meter.lift = meter.acc.lift / t;
+			meter.drag = meter.acc.drag / t;
+			meter.cl = meter.acc.cl / t;
+			meter.cd = meter.acc.cd / t;
+			meter.cm = meter.acc.cm / t;
 			meter.ready = true;
+			meter.samples = (meter.samples || 0) + 1;
 			meter.acc = null;
 		}
 	}
 
 	function measureForces(dt) {
-		measureFoilForce(mainMaskFbo, mainForce, dt);
-		measureFoilForce(stabMaskFbo, stabForce, dt);
+		measureFoilForce(mainMaskFbo, mainOriginXY(), params.mainChord, mainForce, dt);
+		measureFoilForce(stabMaskFbo, stabOriginXY(), params.stabChord, stabForce, dt);
 	}
 
 	// Pitching moment about the assembly's own centre (midway between the
@@ -1573,8 +1709,6 @@
 			} else {
 				var newX = q.x;
 				var newDepth = Math.max(0.01, surfaceY() - q.y);
-				groupVel.x = (newX - params.groupX) / Math.max(1e-3, dtHint);
-				groupVel.y = -(newDepth - params.depth) / Math.max(1e-3, dtHint);
 				params.groupX = newX;
 				params.depth = newDepth;
 			}
@@ -1664,6 +1798,14 @@
 		blit(dye.write); dye.swap();
 		gl.uniform1i(p.uniforms.uTexture, velocity.read.attach(0));
 		blit(velocity.write); velocity.swap();
+		gl.uniform1i(p.uniforms.uTexture, pressure.read.attach(0));
+		blit(pressure.write); pressure.swap();
+		if (params.mode !== 'twoPhase') {
+			p = programs.fill;
+			gl.useProgram(p.handle);
+			gl.uniform4f(p.uniforms.value, params.flow, 0, 0, 1);
+			blit(velocity.write); velocity.swap();
+		}
 		initPhase();
 	}
 
@@ -1718,6 +1860,10 @@
 			formatRG: isWebGL2 ? formatFor(gl.RG16F, gl.RG, halfFloatTexType) : { internal: gl.RGBA, format: gl.RGBA },
 			formatR: isWebGL2 ? formatFor(gl.R16F, gl.RED, halfFloatTexType) : { internal: gl.RGBA, format: gl.RGBA }
 		};
+		if (isWebGL2) {
+			ext.formatR32 = supportRenderTextureFormat(gl.R32F, gl.RED, gl.FLOAT) ? { internal: gl.R32F, format: gl.RED } : null;
+			ext.formatRGBA32 = supportRenderTextureFormat(gl.RGBA32F, gl.RGBA, gl.FLOAT) ? { internal: gl.RGBA32F, format: gl.RGBA } : null;
+		}
 
 		gl.clearColor(0, 0, 0, 1);
 
@@ -1731,6 +1877,7 @@
 	function buildPrograms() {
 		var prefix = ext.supportLinearFiltering ? '' : '#define MANUAL_FILTERING\n';
 		programs.clear = program(CLEAR_FRAG);
+		programs.fill = program(FILL_FRAG);
 		programs.splat = program(SPLAT_FRAG);
 		programs.advection = program(prefix + ADVECTION_FRAG);
 		programs.divergence = program(DIVERGENCE_FRAG);
@@ -1769,22 +1916,28 @@
 		dyeHat = createFBO(dw, dh, ext.formatRGBA.internal, ext.formatRGBA.format, type, filter);
 		dyeTilde = createFBO(dw, dh, ext.formatRGBA.internal, ext.formatRGBA.format, type, filter);
 		velocity = createDoubleFBO(sw, sh, ext.formatRG.internal, ext.formatRG.format, type, filter);
-		divergenceFbo = createFBO(sw, sh, ext.formatR.internal, ext.formatR.format, type, gl.NEAREST);
+		// Pressure and divergence in 32-bit floats where the GPU allows: the
+		// forces are sums over the pressure, and half floats held it to about
+		// three significant figures.
+		var fr = ext.formatR32 || ext.formatR, ftype = ext.formatR32 ? gl.FLOAT : type;
+		divergenceFbo = createFBO(sw, sh, fr.internal, fr.format, ftype, gl.NEAREST);
 		curlFbo = createFBO(sw, sh, ext.formatR.internal, ext.formatR.format, type, gl.NEAREST);
 		mainMaskFbo = createFBO(sw, sh, ext.formatRGBA.internal, ext.formatRGBA.format, type, filter);
 		stabMaskFbo = createFBO(sw, sh, ext.formatRGBA.internal, ext.formatRGBA.format, type, filter);
 		obstacleFbo = createFBO(sw, sh, ext.formatRGBA.internal, ext.formatRGBA.format, type, filter);
 
-		var F = 512;
-		forceFbo = createFBO(F, F / 2, ext.formatRGBA.internal, ext.formatRGBA.format, type, gl.NEAREST);
+		// The force pass runs at the sim's own resolution and is summed by an
+		// exact 2x2 chain down to one texel, in 32-bit floats where possible.
+		var f4 = ext.formatRGBA32 || ext.formatRGBA, f4type = ext.formatRGBA32 ? gl.FLOAT : type;
+		forceFbo = createFBO(sw, sh, f4.internal, f4.format, f4type, gl.NEAREST);
 		speedField = createDoubleFBO(sw, sh, ext.formatR.internal, ext.formatR.format, type, filter);
 		reduceChain = [];
-		var rw = F, rh = F / 2;
+		var rw = sw, rh = sh;
 		while (rw > 1 || rh > 1) {
-			rw = Math.max(1, rw >> 1); rh = Math.max(1, rh >> 1);
-			reduceChain.push(createFBO(rw, rh, ext.formatRGBA.internal, ext.formatRGBA.format, type, gl.NEAREST));
+			rw = Math.max(1, Math.ceil(rw / 2)); rh = Math.max(1, Math.ceil(rh / 2));
+			reduceChain.push(createFBO(rw, rh, f4.internal, f4.format, f4type, gl.NEAREST));
 		}
-		pressure = createDoubleFBO(sw, sh, ext.formatR.internal, ext.formatR.format, type, gl.NEAREST);
+		pressure = createDoubleFBO(sw, sh, fr.internal, fr.format, ftype, gl.NEAREST);
 
 		// Two-phase mode's own fields, at sim resolution (not dye's, larger)
 		// so phi lands on the exact same grid the pressure solve's face
@@ -1796,7 +1949,8 @@
 
 		LAB.simWidth = sw;
 		LAB.simHeight = sh;
-		LAB.cellsOnMainChord = params.mainChord * sw;
+		// The mask measures chord in screen heights, so it spans chord x sh cells.
+		LAB.cellsOnMainChord = params.mainChord * sh;
 
 		initPhase();
 	}
@@ -1830,14 +1984,42 @@
 
 		if (resize()) buildBuffers();
 
+		// The dragged assembly's velocity, from how far it actually moved this
+		// frame, so it stops pushing water the moment the mouse holds still.
+		if (LAB.onFrame) LAB.onFrame(dt);
+
+		var dragging = pointer.down && !pointer.push && !rig;
+		if (rig && dt > 0) {
+			// The rig moves itself: its velocity, from how far the mast base
+			// moved this frame, is what the mask hands the water. A rig marked
+			// `still` (calibration, which jumps between points) pushes nothing.
+			var at = rigPoint(0, 0);
+			if (rigFrom && !rig.still) { groupVel.x = (at[0] - rigFrom[0]) / dt; groupVel.y = (at[1] - rigFrom[1]) / dt; }
+			else { groupVel.x = 0; groupVel.y = 0; }
+			rigFrom = at;
+		} else if (dragging && dragFrom && dt > 0) {
+			groupVel.x = (params.groupX - dragFrom.x) / dt;
+			groupVel.y = -(params.depth - dragFrom.depth) / dt;
+		} else {
+			groupVel.x = 0; groupVel.y = 0;
+		}
+		dragFrom = dragging ? { x: params.groupX, depth: params.depth } : null;
+		if (!rig) rigFrom = null;
+
 		if (!params.paused) {
-			simTime += dt;
-			inject(dt);
-			step(dt);
-			measureForces(dt);
+			simAccum = Math.min(simAccum + dt, 2 * SIM_DT);
+			var n = Math.min(2, Math.floor(simAccum / SIM_DT + 0.1));
+			for (var i = 0; i < n; i++) {
+				simTime += SIM_DT;
+				inject(SIM_DT);
+				step(SIM_DT);
+				measureForces(SIM_DT);
+				if (LAB.onStep) LAB.onStep(SIM_DT);
+				sweepTick(SIM_DT);
+				offsetSweepTick(SIM_DT);
+			}
+			simAccum = Math.max(0, simAccum - n * SIM_DT);
 			buildSpeedField();
-			sweepTick(dt);
-			offsetSweepTick(dt);
 		}
 
 		var p = programs.display;
@@ -1854,6 +2036,15 @@
 		gl.uniform1f(p.uniforms.twoPhase, params.mode === 'twoPhase' ? 1 : 0);
 		gl.uniform1i(p.uniforms.uPhase, phase.read.attach(3));
 		setFoilUniforms(p);
+		gl.uniform1f(p.uniforms.showRig, rig ? 1 : 0);
+		if (rig) {
+			var base = rigPoint(0, 0), fa = mainOriginXY(), fb = stabOriginXY();
+			gl.uniform2f(p.uniforms.mastBase, base[0], base[1]);
+			gl.uniform2f(p.uniforms.fuseA, fa[0], fa[1]);
+			gl.uniform2f(p.uniforms.fuseB, fb[0], fb[1]);
+			gl.uniform1f(p.uniforms.mastHalf, (rig.mastThick || 0.015) / rig.metresPerHeight * 0.5);
+			gl.uniform1f(p.uniforms.vent, rig.vent || 0);
+		}
 		blit(null);
 
 		if (mainForce.ready) {
@@ -1882,7 +2073,7 @@
 		var elCells = document.getElementById('r-cells');
 		if (elCells && LAB.cellsOnMainChord) {
 			elCells.textContent = Math.round(LAB.cellsOnMainChord) + ' / ' +
-				Math.round(params.stabChord * LAB.simWidth);
+				Math.round(params.stabChord * LAB.simHeight);
 		}
 
 		frames++; fpsTimer += dt;
@@ -1921,13 +2112,16 @@
 	LAB.clearAll = function () { clearAll(); };
 	LAB.rebuildBuffersForTest = function () { buildBuffers(); };
 	LAB.mainOriginXY = mainOriginXY;
+	LAB.mainAngle = mainAngle;
+	LAB.stabAngle = stabAngle;
+	LAB.canvas = function () { return canvas; };
 	LAB.stabOriginXY = stabOriginXY;
 	LAB.debug = function () {
 		return {
 			gl: gl, ext: ext, canvas: canvas,
 			simWidth: LAB.simWidth, simHeight: LAB.simHeight,
 			cellsOnMainChord: LAB.cellsOnMainChord,
-			cellsOnStabChord: params.stabChord * LAB.simWidth,
+			cellsOnStabChord: params.stabChord * LAB.simHeight,
 			mainForce: mainForce, stabForce: stabForce,
 			sweep: sweep, offsetSweep: offsetSweep,
 			groupVel: groupVel

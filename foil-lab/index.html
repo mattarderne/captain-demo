@@ -55,6 +55,10 @@
 	#sweep-table th, #sweep-table td, #offset-table th, #offset-table td { text-align:right; padding:2px 4px; border-bottom:1px solid rgba(140,190,235,0.12); }
 	#sweep-table th:first-child, #sweep-table td:first-child, #offset-table th:first-child, #offset-table td:first-child { text-align:left; }
 	#sweep-table thead th, #offset-table thead th { color:#9fc4e6; font-weight:normal; }
+	/* In flight the lab's own controls and sweeps step aside, so the whole rig shows. */
+	body.flight #controls, body.flight .lab-only { display:none; }
+	body.flight #sweep-panel { width:268px; }
+	body.flight #hint { display:none; }
 </style>
 </head>
 <body>
@@ -201,12 +205,53 @@
 			<input type="range" id="s-colourblur" min="0" max="8" step="0.1"></div>
 	</details>
 
-	<p class="note">Linearised free surface only: no wave deformation, no ventilation, no
-	cavitation. This shows the trend and the mechanism, not the breakdown right at the surface.</p>
+	<p class="note">High-speed free surface only: no gravity, so no waves, wave drag,
+	ventilation or cavitation. This shows the trend and the mechanism at flying speed, not
+	take-off or the breakdown right at the surface.</p>
 </div>
 
 <div id="sweep-panel" class="panel">
-	<h1>Depth sweep</h1>
+	<h1>Free flight</h1>
+	<p class="lede">A wingfoil with an 85&nbsp;cm, aspect-ratio-9 front wing. The rider holds the
+	board's attitude with their feet and the height is free: she rises until the surface takes
+	away enough lift to match her weight. Climb too far and the front wing breaches and
+	ventilates. <b>Trim</b> sets the attitude for the current speed. Then change the speed.</p>
+	<p class="note" id="flight-status"></p>
+	<div class="btns">
+		<button id="b-calibrate">calibrate</button>
+		<button id="b-fly">fly</button>
+		<button id="b-trim">trim</button>
+		<button id="b-drop">drop her in</button>
+		<button id="b-balance">rider balances</button>
+	</div>
+	<div class="row"><label>Speed <span class="val" id="v-f-speed"></span></label>
+		<input type="range" id="s-f-speed" min="8" max="26" step="0.5"></div>
+	<div class="row"><label>Rider and gear <span class="val" id="v-f-mass"></span></label>
+		<input type="range" id="s-f-mass" min="50" max="120" step="1"></div>
+	<div class="row"><label>Board attitude the rider holds <span class="val" id="v-f-attitude"></span></label>
+		<input type="range" id="s-f-attitude" min="-6" max="10" step="0.1"></div>
+	<div class="row"><label>Stance, ahead of the mast <span class="val" id="v-f-stance"></span></label>
+		<input type="range" id="s-f-stance" min="-5" max="40" step="0.5"></div>
+	<div class="row"><label>Mast <span class="val" id="v-f-mast"></span></label>
+		<input type="range" id="s-f-mast" min="60" max="100" step="1"></div>
+	<div class="readout">
+		<div><span>State</span><span class="val" id="fr-state">&mdash;</span></div>
+		<div><span>Board above the water</span><span class="val" id="fr-ride">&mdash;</span></div>
+		<div><span>Front wing below the surface</span><span class="val" id="fr-depth">&mdash;</span></div>
+		<div><span>Pitch</span><span class="val" id="fr-pitch">&mdash;</span></div>
+		<div><span>Lift, of weight</span><span class="val" id="fr-lift">&mdash;</span></div>
+		<div><span>Drag</span><span class="val" id="fr-drag">&mdash;</span></div>
+		<div><span>Power to hold speed</span><span class="val" id="fr-power">&mdash;</span></div>
+		<div><span>Rider's weight</span><span class="val" id="fr-feet">&mdash;</span></div>
+	</div>
+	<p class="note" id="fr-breakdown"></p>
+	<p class="note">Section lift and moment come from the solver. Span effects, the
+	stabiliser's downwash, friction, the mast and ventilation are calculated, since a side-on
+	slice cannot hold them. The water is drawn in slow motion: the solver cannot run real
+	wingfoil speeds in real time.</p>
+
+	<div class="lab-only">
+	<h1 style="margin-top:16px">Depth sweep</h1>
 	<p class="lede">Steps the assembly from deep to just under the surface, holds each depth long
 	enough to settle and average, and records lift. This curve is the actual answer to "what
 	happens at different depths" &mdash; not a single reading.</p>
@@ -218,6 +263,7 @@
 	rigidly-paired assembly can never show &mdash; the two feel different amounts of surface
 	effect only once they are not at the same depth.</p>
 	<div id="offset-table"><p class="note">No sweep run yet.</p></div>
+	</div>
 </div>
 
 <div id="hint" class="panel">
@@ -229,6 +275,7 @@
 
 <script src="../shared/labkit.js"></script>
 <script src="foil.js"></script>
+<script src="flight.js"></script>
 <script>FOILLAB.boot();</script>
 </body>
 </html>
